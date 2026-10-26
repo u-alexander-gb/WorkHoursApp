@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
@@ -90,6 +91,21 @@ class WorkRepository {
   WorkRepository._(this._db);
   final Database _db;
 
+  static const _backupColumns = <String, List<String>>{
+    'projects': ['id', 'name', 'archived'],
+    'rates': [
+      'id', 'project_id', 'name', 'cents_per_hour', 'currency', 'archived'
+    ],
+    'shifts': [
+      'id', 'project_id', 'rate_id', 'status', 'planned_start_ms',
+      'planned_end_ms', 'pre_check_in_ms', 'confirmed_ms',
+      'credited_start_ms', 'checked_out_ms', 'credited_end_ms',
+      'break_minutes', 'rate_name_snapshot', 'rate_cents_snapshot',
+      'currency_snapshot'
+    ],
+    'shift_events': ['id', 'shift_id', 'kind', 'recorded_ms', 'credited_ms'],
+  };
+
   static Future<WorkRepository> open() async {
     if (Platform.isWindows || Platform.isLinux) {
       sqfliteFfiInit();
@@ -167,6 +183,58 @@ class WorkRepository {
   }
 
   Future<void> close() => _db.close();
+
+  Future<String> exportBackup() async {
+    final tables = <String, List<Map<String, Object?>>>{};
+    for (final table in _backupColumns.keys) {
+      tables[table] = await _db.query(table);
+    }
+    return jsonEncode({
+      'format': 'work-hours-backup',
+      'version': 1,
+      'createdAt': DateTime.now().toUtc().toIso8601String(),
+      'tables': tables,
+    });
+  }
+
+  Future<void> restoreBackup(String contents) async {
+    final Object? decoded = jsonDecode(contents);
+    if (decoded is! Map<String, dynamic> ||
+        decoded['format'] != 'work-hours-backup' ||
+        decoded['version'] != 1 ||
+        decoded['tables'] is! Map<String, dynamic>) {
+      throw const FormatException('Неверный формат резервной копии');
+    }
+    final source = decoded['tables'] as Map<String, dynamic>;
+    final tables = <String, List<Map<String, Object?>>>{};
+    for (final entry in _backupColumns.entries) {
+      final rawRows = source[entry.key];
+      if (rawRows is! List) {
+        throw const FormatException('В копии отсутствует таблица данных');
+      }
+      final rows = <Map<String, Object?>>[];
+      for (final rawRow in rawRows) {
+        if (rawRow is! Map<String, dynamic> ||
+            rawRow.keys.any((column) => !entry.value.contains(column)) ||
+            rawRow.values.any((value) =>
+                value != null && value is! String && value is! int)) {
+          throw const FormatException('В копии есть неверные данные');
+        }
+        rows.add(Map<String, Object?>.from(rawRow));
+      }
+      tables[entry.key] = rows;
+    }
+    await _db.transaction((tx) async {
+      for (final table in _backupColumns.keys.toList().reversed) {
+        await tx.delete(table);
+      }
+      for (final table in _backupColumns.keys) {
+        for (final row in tables[table]!) {
+          await tx.insert(table, row);
+        }
+      }
+    });
+  }
 
   Future<List<WorkProject>> projects() async {
     final rows = await _db.query('projects',

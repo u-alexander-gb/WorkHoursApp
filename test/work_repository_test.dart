@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:work_hours_app/src/work_repository.dart';
 
@@ -99,5 +101,50 @@ void main() {
       throwsArgumentError,
     );
     expect((await repository.shifts()).single.status, ShiftStatus.active);
+  });
+
+  test('backup restores projects, rates, shifts and events', () async {
+    await repository.addProject('Combo BV');
+    final project = (await repository.projects()).single;
+    await repository.addRate(
+      projectId: project.id,
+      name: 'Сбор',
+      centsPerHour: 1500,
+    );
+    final rate = (await repository.rates(project.id)).single;
+    final start = DateTime.now().subtract(const Duration(hours: 8));
+    await repository.planShift(projectId: project.id, start: start);
+    final id = (await repository.shifts()).single.id;
+    await repository.armShift(id, rate.id);
+    await repository.confirmStart(id, start);
+    await repository.checkOut(id, start.add(const Duration(hours: 7)),
+        breakMinutes: 30);
+    final backup = await repository.exportBackup();
+
+    await repository.addProject('Лишний проект');
+    await repository.restoreBackup(backup);
+
+    expect((await repository.projects()).map((p) => p.name), ['Combo BV']);
+    expect((await repository.rates(project.id)).single.name, 'Сбор');
+    expect((await repository.shifts()).single.earnedCents, 9750);
+    final restored = jsonDecode(await repository.exportBackup());
+    expect((restored['tables']['shift_events'] as List).length, 4);
+  });
+
+  test('failed restore keeps existing data', () async {
+    await repository.addProject('Существующий проект');
+    final backup = jsonDecode(await repository.exportBackup()) as Map<String, dynamic>;
+    final tables = backup['tables'] as Map<String, dynamic>;
+    (tables['rates'] as List).add({
+      'id': 'invalid',
+      'project_id': 'missing',
+      'name': 'Тариф',
+      'cents_per_hour': 1000,
+      'currency': 'EUR',
+      'archived': 0,
+    });
+
+    await expectLater(repository.restoreBackup(jsonEncode(backup)), throwsA(isA<Exception>()));
+    expect((await repository.projects()).single.name, 'Существующий проект');
   });
 }

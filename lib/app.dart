@@ -1,3 +1,7 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import 'src/work_repository.dart';
@@ -113,6 +117,89 @@ class _WorkHomeState extends State<WorkHome> {
       if (mounted) _showError(context, error);
     } finally {
       await _reload();
+    }
+  }
+
+  Future<void> _exportBackup() async {
+    try {
+      final contents = await widget.repository.exportBackup();
+      final now = DateTime.now();
+      final name = 'work-hours-${now.year}-${_two(now.month)}-${_two(now.day)}.json';
+      final saved = await FilePicker.saveFile(
+        fileName: name,
+        bytes: Uint8List.fromList(utf8.encode(contents)),
+        mimeType: 'application/json',
+      );
+      if (saved != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Резервная копия сохранена')),
+        );
+      }
+    } catch (error) {
+      if (mounted) _showError(context, error);
+    }
+  }
+
+  Future<void> _importBackup() async {
+    try {
+      final file = await FilePicker.pickFile(
+        type: FileType.custom,
+        allowedExtensions: ['json'],
+      );
+      if (file == null) return;
+      final length = await file.length();
+      if (length != null && length > 20 * 1024 * 1024) {
+        throw const FormatException('Файл резервной копии слишком большой');
+      }
+      final bytes = await file.readAsBytes();
+      if (bytes.length > 20 * 1024 * 1024) {
+        throw const FormatException('Файл резервной копии слишком большой');
+      }
+      if (!mounted) return;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Восстановить данные?'),
+          content: Text('Текущие проекты, тарифы и смены будут заменены '
+              'данными из файла ${file.name}. Перед продолжением сохраните '
+              'копию текущих данных.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Восстановить'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+      final previousArmed = shifts.where((s) => s.status == ShiftStatus.armed).toList();
+      await widget.repository.restoreBackup(utf8.decode(bytes));
+      for (final shift in previousArmed) {
+        await reminders.cancel(shift.id);
+      }
+      final restored = await widget.repository.shifts();
+      for (final shift in restored) {
+        if (shift.status == ShiftStatus.armed &&
+            shift.plannedStart.isAfter(DateTime.now())) {
+          await reminders.schedule(
+            shiftId: shift.id,
+            start: shift.plannedStart,
+            projectName: shift.projectName,
+          );
+        }
+      }
+      await _reload();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Данные восстановлены')),
+        );
+      }
+    } catch (error) {
+      if (mounted) _showError(context, error);
     }
   }
 
@@ -592,7 +679,25 @@ class _WorkHomeState extends State<WorkHome> {
   Widget build(BuildContext context) {
     final titles = ['Сегодня', 'План', 'Проекты', 'Отчёты'];
     return Scaffold(
-      appBar: AppBar(title: Text(titles[tab])),
+      appBar: AppBar(
+        title: Text(titles[tab]),
+        actions: [
+          PopupMenuButton<String>(
+            tooltip: 'Резервная копия',
+            onSelected: (value) {
+              if (value == 'export') {
+                _exportBackup();
+              } else {
+                _importBackup();
+              }
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 'export', child: Text('Сохранить копию')),
+              PopupMenuItem(value: 'import', child: Text('Восстановить копию')),
+            ],
+          ),
+        ],
+      ),
       body: SafeArea(child: Center(child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 720),
         child: loading
