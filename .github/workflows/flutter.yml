@@ -29,3 +29,28 @@ jobs:
         with:
           name: work-hours-debug-apk
           path: build/app/outputs/flutter-apk/app-debug.apk
+
+  windows-build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Generate Windows platform files
+        run: flutter create --platforms=windows .
+      - name: Save Windows scaffold
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-scaffold
+          path: windows/
+      - name: Resolve dependencies
+        run: flutter pub get
+      - name: Build Windows app
+        run: flutter build windows --release
+      - name: Save Windows app
+        uses: actions/upload-artifact@v4
+        with:
+          name: work-hours-windows
+          path: build/windows/x64/runner/Release/
