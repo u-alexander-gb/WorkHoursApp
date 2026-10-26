@@ -143,7 +143,9 @@ class _WorkHomeState extends State<WorkHome> {
         ],
       ),
     );
-    if (result != null) await _perform(() => widget.repository.addProject(result));
+    if (result != null) {
+      await _perform(() => widget.repository.addProject(result));
+    }
     controller.dispose();
   }
 
@@ -176,6 +178,7 @@ class _WorkHomeState extends State<WorkHome> {
     if (result == null) return;
     final cents = _parseCents(result.$2);
     if (cents == null) {
+      if (!mounted) return;
       _showError(context, 'Укажите сумму, например 15,50');
       return;
     }
@@ -205,7 +208,9 @@ class _WorkHomeState extends State<WorkHome> {
                   .map((p) => DropdownMenuItem(value: p.id, child: Text(p.name)))
                   .toList(),
               onChanged: (id) {
-                if (id != null) update(() => projectId = id);
+                if (id != null) {
+                  update(() => projectId = id);
+                }
               },
             ),
             ListTile(
@@ -224,7 +229,9 @@ class _WorkHomeState extends State<WorkHome> {
               subtitle: Text(_dateTime(end)),
               onTap: () async {
                 final chosen = await _pickDateTime(end);
-                if (chosen != null) update(() => end = chosen);
+                if (chosen != null) {
+                  update(() => end = chosen);
+                }
               },
             ),
           ]),
@@ -316,7 +323,9 @@ class _WorkHomeState extends State<WorkHome> {
               subtitle: Text(_dateTime(end)),
               onTap: () async {
                 final chosen = await _pickDateTime(end);
-                if (chosen != null) update(() => end = chosen);
+                if (chosen != null) {
+                  update(() => end = chosen);
+                }
               },
             ),
             TextField(
@@ -333,7 +342,9 @@ class _WorkHomeState extends State<WorkHome> {
             FilledButton(
               onPressed: () {
                 final minutes = int.tryParse(breakInput.text.trim());
-                if (minutes != null) Navigator.pop(dialogContext, (end, minutes));
+                if (minutes != null) {
+                  Navigator.pop(dialogContext, (end, minutes));
+                }
               },
               child: const Text('Check-out'),
             ),

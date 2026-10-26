@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'dart:math';
 
-import 'package:sqflite/sqflite.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 String _newId() {
@@ -288,7 +287,9 @@ class WorkRepository {
 
   Future<void> checkOut(String shiftId, DateTime creditedEnd,
       {required int breakMinutes}) async {
-    if (breakMinutes < 0) throw ArgumentError('Перерыв не может быть отрицательным');
+    if (breakMinutes < 0) {
+      throw ArgumentError('Перерыв не может быть отрицательным');
+    }
     await _db.transaction((tx) async {
       final shift = await _requireShift(tx, shiftId, ShiftStatus.active);
       final start = DateTime.fromMillisecondsSinceEpoch(
