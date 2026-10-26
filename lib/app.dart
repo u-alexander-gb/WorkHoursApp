@@ -218,10 +218,12 @@ class _WorkHomeState extends State<WorkHome> {
               subtitle: Text(_dateTime(start)),
               onTap: () async {
                 final chosen = await _pickDateTime(start);
-                if (chosen != null) update(() {
-                  start = chosen;
-                  end = start.add(const Duration(hours: 8));
-                });
+                if (chosen != null) {
+                  update(() {
+                    start = chosen;
+                    end = start.add(const Duration(hours: 8));
+                  });
+                }
               },
             ),
             ListTile(
