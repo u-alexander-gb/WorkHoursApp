@@ -23,4 +23,6 @@ local.properties
 
 # Personal data and exports
 *.workhours-backup
+work-hours-*.json
+work-hours-*.csv
 exports/
