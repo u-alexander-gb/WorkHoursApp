@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'src/work_repository.dart';
+import 'src/reminder_service.dart';
 
 void _showError(BuildContext context, Object error) =>
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$error')));
@@ -64,6 +65,7 @@ class WorkHome extends StatefulWidget {
 }
 
 class _WorkHomeState extends State<WorkHome> {
+  final ReminderService reminders = ReminderService();
   int tab = 0;
   bool loading = true;
   List<WorkProject> projects = [];
@@ -76,6 +78,11 @@ class _WorkHomeState extends State<WorkHome> {
   @override
   void initState() {
     super.initState();
+    reminders.onTap = () {
+      if (!mounted) return;
+      setState(() => tab = 0);
+      _reload();
+    };
     _reload();
   }
 
@@ -102,9 +109,10 @@ class _WorkHomeState extends State<WorkHome> {
   Future<void> _perform(Future<void> Function() action) async {
     try {
       await action();
-      await _reload();
     } catch (error) {
       if (mounted) _showError(context, error);
+    } finally {
+      await _reload();
     }
   }
 
@@ -274,7 +282,19 @@ class _WorkHomeState extends State<WorkHome> {
       ),
     );
     if (rateId != null) {
-      await _perform(() => widget.repository.armShift(shift.id, rateId));
+      await _perform(() async {
+        await widget.repository.armShift(shift.id, rateId);
+        final reminder = await reminders.schedule(
+          shiftId: shift.id,
+          start: shift.plannedStart,
+          projectName: shift.projectName,
+        );
+        if (mounted && !reminder.scheduled) {
+          _showError(context, 'Напоминание не назначено. Проверьте разрешения.');
+        } else if (mounted && !reminder.exact) {
+          _showError(context, 'Напоминание может прийти с задержкой.');
+        }
+      });
     }
   }
 
@@ -307,7 +327,10 @@ class _WorkHomeState extends State<WorkHome> {
       ),
     );
     if (start != null) {
-      await _perform(() => widget.repository.confirmStart(shift.id, start));
+      await _perform(() async {
+        await widget.repository.confirmStart(shift.id, start);
+        await reminders.cancel(shift.id);
+      });
     }
   }
 
@@ -375,6 +398,9 @@ class _WorkHomeState extends State<WorkHome> {
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(shift.projectName, style: Theme.of(context).textTheme.titleMedium),
           Text('${_dateTime(shift.plannedStart)} · $status'),
+          if (shift.status == ShiftStatus.armed &&
+              shift.plannedStart.isBefore(DateTime.now()))
+            const Text('Плановое начало прошло. Подтвердите прибытие.'),
           if (shift.rateName != null) Text('Тариф: ${shift.rateName}'),
           if (shift.status == ShiftStatus.completed)
             Text('${_duration(shift.paidMinutes)} · '
