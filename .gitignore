@@ -1,0 +1,25 @@
+# Flutter/Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+coverage/
+*.iml
+
+# Editors and local settings
+.idea/
+.vscode/
+*.log
+
+# Android signing and local configuration
+android/key.properties
+*.jks
+*.keystore
+local.properties
+
+# Personal data and exports
+*.workhours-backup
+exports/
