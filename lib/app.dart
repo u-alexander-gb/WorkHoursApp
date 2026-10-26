@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import 'src/work_repository.dart';
 import 'src/reminder_service.dart';
+import 'src/report_csv.dart';
 
 void _showError(BuildContext context, Object error) =>
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$error')));
@@ -607,15 +608,37 @@ class _WorkHomeState extends State<WorkHome> {
         };
       });
 
+  List<WorkShift> _completedForRange(DateTimeRange range) => shifts.where((shift) {
+        final start = shift.creditedStart;
+        return shift.status == ShiftStatus.completed &&
+            start != null &&
+            !start.isBefore(range.start) &&
+            start.isBefore(range.end);
+      }).toList();
+
+  Future<void> _exportReport(DateTimeRange range, List<WorkShift> completed) async {
+    try {
+      final csv = buildReportCsv(completed);
+      final name = 'work-hours-${range.start.year}-${_two(range.start.month)}-'
+          '${_two(range.start.day)}.csv';
+      final saved = await FilePicker.saveFile(
+        fileName: name,
+        bytes: Uint8List.fromList([0xEF, 0xBB, 0xBF, ...utf8.encode(csv)]),
+        mimeType: 'text/csv',
+      );
+      if (saved != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Отчёт CSV сохранён')),
+        );
+      }
+    } catch (error) {
+      if (mounted) _showError(context, error);
+    }
+  }
+
   Widget _reports() {
     final range = _range();
-    final completed = shifts.where((shift) {
-      final start = shift.creditedStart;
-      return shift.status == ShiftStatus.completed &&
-          start != null &&
-          !start.isBefore(range.start) &&
-          start.isBefore(range.end);
-    }).toList();
+    final completed = _completedForRange(range);
     final minutes = completed.fold<int>(0, (sum, s) => sum + s.paidMinutes);
     final totals = <String, int>{};
     for (final shift in completed) {
@@ -671,6 +694,11 @@ class _WorkHomeState extends State<WorkHome> {
           if (completed.isEmpty) const Text('Завершённых смен нет.'),
         ]),
       )),
+      OutlinedButton.icon(
+        onPressed: completed.isEmpty ? null : () => _exportReport(range, completed),
+        icon: const Icon(Icons.download_outlined),
+        label: const Text('Сохранить отчёт CSV'),
+      ),
       for (final shift in completed) _shiftCard(shift),
     ]);
   }

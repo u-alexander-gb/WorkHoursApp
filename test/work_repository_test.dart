@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:work_hours_app/src/report_csv.dart';
 import 'package:work_hours_app/src/work_repository.dart';
 
 void main() {
@@ -146,5 +147,27 @@ void main() {
 
     await expectLater(repository.restoreBackup(jsonEncode(backup)), throwsA(isA<Exception>()));
     expect((await repository.projects()).single.name, 'Существующий проект');
+  });
+
+  test('CSV report escapes names and includes totals', () async {
+    await repository.addProject('Combo; "BV"');
+    final project = (await repository.projects()).single;
+    await repository.addRate(
+      projectId: project.id,
+      name: 'Сбор',
+      centsPerHour: 1500,
+    );
+    final rate = (await repository.rates(project.id)).single;
+    final start = DateTime.now().subtract(const Duration(hours: 2));
+    await repository.planShift(projectId: project.id, start: start);
+    final id = (await repository.shifts()).single.id;
+    await repository.armShift(id, rate.id);
+    await repository.confirmStart(id, start);
+    await repository.checkOut(id, start.add(const Duration(hours: 1)),
+        breakMinutes: 0);
+
+    final csv = buildReportCsv(await repository.shifts());
+    expect(csv, contains('"Combo; ""BV"""'));
+    expect(csv, contains('Итого;;;;;60;;EUR;15,00'));
   });
 }
