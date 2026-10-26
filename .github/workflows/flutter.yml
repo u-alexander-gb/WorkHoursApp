@@ -1,0 +1,33 @@
+name: Flutter checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Generate Android platform files
+        run: flutter create --platforms=android .
+      - name: Resolve dependencies
+        run: flutter pub get
+      - name: Format source for checks
+        run: dart format lib test
+      - name: Analyze
+        run: flutter analyze
+      - name: Test
+        run: flutter test
+      - name: Build debug APK
+        run: flutter build apk --debug
+      - name: Save APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: work-hours-debug-apk
+          path: build/app/outputs/flutter-apk/app-debug.apk
