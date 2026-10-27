@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
+import 'src/backup_codec.dart';
 import 'src/work_repository.dart';
 import 'src/reminder_service.dart';
 import 'src/report_csv.dart';
@@ -121,15 +122,83 @@ class _WorkHomeState extends State<WorkHome> {
     }
   }
 
+  Future<String?> _askBackupPassword({required bool create}) async {
+    final password = TextEditingController();
+    final repeated = TextEditingController();
+    var hidden = true;
+    final result = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, update) => AlertDialog(
+          title: Text(create ? 'Пароль резервной копии' : 'Открыть резервную копию'),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            Text(create
+                ? 'Запомните пароль: без него восстановить копию нельзя. Минимум 12 символов.'
+                : 'Введите пароль для проверки и просмотра копии.'),
+            TextField(
+              controller: password,
+              obscureText: hidden,
+              autofocus: true,
+              decoration: const InputDecoration(labelText: 'Пароль'),
+              onChanged: (_) => update(() {}),
+            ),
+            if (create)
+              TextField(
+                controller: repeated,
+                obscureText: hidden,
+                decoration: InputDecoration(
+                  labelText: 'Повторите пароль',
+                  errorText: repeated.text.isNotEmpty &&
+                          repeated.text != password.text
+                      ? 'Пароли не совпадают'
+                      : null,
+                ),
+                onChanged: (_) => update(() {}),
+              ),
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Показать пароль'),
+              value: !hidden,
+              onChanged: (value) => update(() => hidden = value != true),
+            ),
+          ]),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              onPressed: password.text.isEmpty ||
+                      (create &&
+                          (password.text.length < 12 ||
+                              repeated.text != password.text))
+                  ? null
+                  : () => Navigator.pop(dialogContext, password.text),
+              child: Text(create ? 'Продолжить' : 'Проверить'),
+            ),
+          ],
+        ),
+      ),
+    );
+    password.dispose();
+    repeated.dispose();
+    return result;
+  }
+
   Future<void> _exportBackup() async {
     try {
-      final contents = await widget.repository.exportBackup();
+      final password = await _askBackupPassword(create: true);
+      if (password == null) return;
+      final contents = await BackupCodec.encrypt(
+        await widget.repository.exportBackup(),
+        password,
+      );
       final now = DateTime.now();
-      final name = 'work-hours-${now.year}-${_two(now.month)}-${_two(now.day)}.json';
+      final name = 'work-hours-${now.year}-${_two(now.month)}-${_two(now.day)}.whbackup';
       final saved = await FilePicker.saveFile(
         fileName: name,
         bytes: Uint8List.fromList(utf8.encode(contents)),
-        mimeType: 'application/json',
+        mimeType: 'application/octet-stream',
       );
       if (saved != null && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -145,7 +214,7 @@ class _WorkHomeState extends State<WorkHome> {
     try {
       final file = await FilePicker.pickFile(
         type: FileType.custom,
-        allowedExtensions: ['json'],
+        allowedExtensions: ['whbackup', 'json'],
       );
       if (file == null) return;
       final length = await file.length();
@@ -157,13 +226,27 @@ class _WorkHomeState extends State<WorkHome> {
         throw const FormatException('Файл резервной копии слишком большой');
       }
       if (!mounted) return;
+      var contents = utf8.decode(bytes);
+      final encrypted = BackupCodec.isEncrypted(contents);
+      if (encrypted) {
+        final password = await _askBackupPassword(create: false);
+        if (password == null) return;
+        contents = await BackupCodec.decrypt(contents, password);
+      }
+      final preview = WorkRepository.inspectBackup(contents);
+      if (!mounted) return;
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (dialogContext) => AlertDialog(
           title: const Text('Восстановить данные?'),
-          content: Text('Текущие проекты, тарифы и смены будут заменены '
-              'данными из файла ${file.name}. Перед продолжением сохраните '
-              'копию текущих данных.'),
+          content: Text('Файл: ${file.name}\n'
+              'Создан: ${_dateTime(preview.createdAt.toLocal())}\n'
+              'Проектов: ${preview.counts['projects']}, '
+              'тарифов: ${preview.counts['rates']}\n'
+              'Смен: ${preview.counts['shifts']}, '
+              'событий: ${preview.counts['shift_events']}\n\n'
+              '${encrypted ? 'Пароль и целостность проверены.' : 'Старая копия без шифрования.'}\n'
+              'Текущие данные будут заменены. Сначала сохраните их копию.'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext, false),
@@ -178,7 +261,7 @@ class _WorkHomeState extends State<WorkHome> {
       );
       if (confirmed != true) return;
       final previousArmed = shifts.where((s) => s.status == ShiftStatus.armed).toList();
-      await widget.repository.restoreBackup(utf8.decode(bytes));
+      await widget.repository.restoreBackup(contents);
       for (final shift in previousArmed) {
         await reminders.cancel(shift.id);
       }

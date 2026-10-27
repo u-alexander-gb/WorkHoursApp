@@ -103,6 +103,20 @@ class ShiftEvent {
   final Map<String, Object?>? after;
 }
 
+class BackupPreview {
+  const BackupPreview({required this.createdAt, required this.counts});
+
+  final DateTime createdAt;
+  final Map<String, int> counts;
+}
+
+class _ParsedBackup {
+  const _ParsedBackup(this.preview, this.tables);
+
+  final BackupPreview preview;
+  final Map<String, List<Map<String, Object?>>> tables;
+}
+
 class WorkRepository {
   WorkRepository._(this._db);
   final Database _db;
@@ -225,13 +239,21 @@ class WorkRepository {
     });
   }
 
-  Future<void> restoreBackup(String contents) async {
+  static BackupPreview inspectBackup(String contents) =>
+      _parseBackup(contents).preview;
+
+  static _ParsedBackup _parseBackup(String contents) {
     final Object? decoded = jsonDecode(contents);
     if (decoded is! Map<String, dynamic> ||
         decoded['format'] != 'work-hours-backup' ||
         (decoded['version'] != 1 && decoded['version'] != 2) ||
-        decoded['tables'] is! Map<String, dynamic>) {
+        decoded['tables'] is! Map<String, dynamic> ||
+        decoded['createdAt'] is! String) {
       throw const FormatException('Неверный формат резервной копии');
+    }
+    final createdAt = DateTime.tryParse(decoded['createdAt'] as String);
+    if (createdAt == null) {
+      throw const FormatException('Неверная дата резервной копии');
     }
     final source = decoded['tables'] as Map<String, dynamic>;
     final tables = <String, List<Map<String, Object?>>>{};
@@ -265,6 +287,17 @@ class WorkRepository {
       }
       tables[entry.key] = rows;
     }
+    return _ParsedBackup(
+      BackupPreview(
+        createdAt: createdAt,
+        counts: {for (final entry in tables.entries) entry.key: entry.value.length},
+      ),
+      tables,
+    );
+  }
+
+  Future<void> restoreBackup(String contents) async {
+    final tables = _parseBackup(contents).tables;
     await _db.transaction((tx) async {
       for (final table in _backupColumns.keys.toList().reversed) {
         await tx.delete(table);
