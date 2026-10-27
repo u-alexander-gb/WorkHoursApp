@@ -1,11 +1,14 @@
 import 'dart:convert';
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'src/backup_codec.dart';
+import 'src/plan_calendar.dart';
 import 'src/work_repository.dart';
 import 'src/reminder_service.dart';
 import 'src/report_csv.dart';
@@ -18,6 +21,13 @@ String _date(DateTime date) => '${_two(date.day)}.${_two(date.month)}.${date.yea
 String _time(DateTime date) => '${_two(date.hour)}:${_two(date.minute)}';
 String _dateTime(DateTime date) => '${_date(date)} ${_time(date)}';
 String _duration(int minutes) => '${minutes ~/ 60} ч ${_two(minutes % 60)} мин';
+String _timeLeft(Duration duration) {
+  final minutes = (duration.inSeconds.abs() + 59) ~/ 60;
+  final days = minutes ~/ 1440;
+  final hours = (minutes % 1440) ~/ 60;
+  final rest = minutes % 60;
+  return days > 0 ? '$days д $hours ч' : '$hours ч ${_two(rest)} мин';
+}
 String _money(int cents, String currency) =>
     '${(cents / 100).toStringAsFixed(2).replaceAll('.', ',')} $currency';
 
@@ -165,6 +175,9 @@ class _WorkHomeState extends State<WorkHome> {
   String period = 'week';
   DateTime anchor = DateTime.now();
   DateTime planWeek = DateTime.now();
+  bool calendarView = false;
+  final SharedPreferencesAsync preferences = SharedPreferencesAsync();
+  Timer? clockTimer;
   DateTimeRange? customRange;
 
   @override
@@ -176,6 +189,34 @@ class _WorkHomeState extends State<WorkHome> {
       _reload();
     };
     _reload();
+    _loadPlanView();
+    clockTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    clockTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadPlanView() async {
+    try {
+      final saved = await preferences.getBool('plan_calendar_view');
+      if (mounted && saved != null) setState(() => calendarView = saved);
+    } catch (_) {
+      // The list view remains usable if platform preferences are unavailable.
+    }
+  }
+
+  Future<void> _setCalendarView(bool value) async {
+    setState(() => calendarView = value);
+    try {
+      await preferences.setBool('plan_calendar_view', value);
+    } catch (error) {
+      if (mounted) _showError(context, 'Не удалось сохранить вид плана: $error');
+    }
   }
 
   Future<void> _reload() async {
@@ -994,10 +1035,39 @@ class _WorkHomeState extends State<WorkHome> {
     }
   }
 
-  Widget _shiftCard(WorkShift shift, {bool inPlan = false}) {
+  Widget? _shiftCountdown(WorkShift shift) {
+    final now = DateTime.now();
+    final active = shift.status == ShiftStatus.active;
+    if (!active && shift.status != ShiftStatus.planned &&
+        shift.status != ShiftStatus.armed) return null;
+    final due = active ? shift.plannedEnd : shift.plannedStart;
+    if (due == null) return null;
+    final begin = active
+        ? (shift.creditedStart ?? shift.plannedStart)
+        : due.subtract(const Duration(hours: 24));
+    final total = due.difference(begin).inSeconds;
+    final progress = total <= 0
+        ? 1.0
+        : (now.difference(begin).inSeconds / total).clamp(0.0, 1.0).toDouble();
+    final left = due.difference(now);
+    final label = active ? 'планового конца' : 'начала';
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(left.isNegative
+            ? 'Время $label прошло на ${_timeLeft(left)}'
+            : 'До $label: ${_timeLeft(left)}'),
+        const SizedBox(height: 4),
+        LinearProgressIndicator(value: progress),
+      ]),
+    );
+  }
+
+  Widget _shiftCard(WorkShift shift, {bool inPlan = false, bool inToday = false}) {
+    final countdown = inToday ? _shiftCountdown(shift) : null;
     final status = switch (shift.status) {
       ShiftStatus.planned => 'План',
-      ShiftStatus.armed => 'Ожидает подтверждения',
+      ShiftStatus.armed => 'Предв. check-in',
       ShiftStatus.active => 'Идёт работа',
       ShiftStatus.completed => 'Завершена',
       ShiftStatus.cancelled => 'Отменена',
@@ -1007,7 +1077,15 @@ class _WorkHomeState extends State<WorkHome> {
         padding: const EdgeInsets.all(12),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(shift.projectName, style: Theme.of(context).textTheme.titleMedium),
-          Text('${_dateTime(shift.plannedStart)} · $status'),
+          AnimatedSwitcher(duration: const Duration(milliseconds: 250),
+            child: Row(key: ValueKey(shift.status), children: [
+            Icon(shiftStatusIcon(shift.status), size: 19,
+                color: shiftStatusColor(shift.status,
+                    Theme.of(context).colorScheme)),
+            const SizedBox(width: 6),
+            Expanded(child: Text('${_dateTime(shift.plannedStart)} · $status')),
+          ])),
+          if (countdown != null) countdown,
           if (shift.status == ShiftStatus.armed &&
               shift.plannedStart.isBefore(DateTime.now()))
             const Text('Плановое начало прошло. Подтвердите прибытие.'),
@@ -1084,7 +1162,7 @@ class _WorkHomeState extends State<WorkHome> {
           style: Theme.of(context).textTheme.headlineSmall),
       if (today.isEmpty) const Padding(
           padding: EdgeInsets.all(16), child: Text('На сегодня нет смен.')),
-      for (final shift in today) _shiftCard(shift),
+      for (final shift in today) _shiftCard(shift, inToday: true),
       OutlinedButton.icon(
           onPressed: _plan,
           icon: const Icon(Icons.add),
@@ -1097,18 +1175,34 @@ class _WorkHomeState extends State<WorkHome> {
         planWeek.day - planWeek.weekday + DateTime.monday);
     final sunday = DateTime(monday.year, monday.month, monday.day + 6);
     return ListView(padding: const EdgeInsets.all(16), children: [
-      Text('План на неделю', style: Theme.of(context).textTheme.headlineSmall),
+      Text(calendarView ? 'План на месяц' : 'План на неделю',
+          style: Theme.of(context).textTheme.headlineSmall),
+      const SizedBox(height: 8),
+      SegmentedButton<bool>(
+        segments: const [
+          ButtonSegment(value: false, icon: Icon(Icons.view_list_outlined),
+              label: Text('Список')),
+          ButtonSegment(value: true, icon: Icon(Icons.calendar_month_outlined),
+              label: Text('Календарь')),
+        ],
+        selected: {calendarView},
+        onSelectionChanged: (selection) => _setCalendarView(selection.first),
+      ),
       Row(children: [
         IconButton(
-          onPressed: () => setState(() => planWeek =
-              DateTime(monday.year, monday.month, monday.day - 7)),
+          onPressed: () => setState(() => planWeek = calendarView
+              ? DateTime(planWeek.year, planWeek.month - 1, 1)
+              : DateTime(monday.year, monday.month, monday.day - 7)),
           icon: const Icon(Icons.chevron_left),
         ),
-        Expanded(child: Text('${_date(monday)} — ${_date(sunday)}',
+        Expanded(child: Text(calendarView
+            ? '${_two(planWeek.month)}.${planWeek.year}'
+            : '${_date(monday)} — ${_date(sunday)}',
             textAlign: TextAlign.center)),
         IconButton(
-          onPressed: () => setState(() => planWeek =
-              DateTime(monday.year, monday.month, monday.day + 7)),
+          onPressed: () => setState(() => planWeek = calendarView
+              ? DateTime(planWeek.year, planWeek.month + 1, 1)
+              : DateTime(monday.year, monday.month, monday.day + 7)),
           icon: const Icon(Icons.chevron_right),
         ),
       ]),
@@ -1118,7 +1212,24 @@ class _WorkHomeState extends State<WorkHome> {
         label: const Text('Добавить смену'),
       ),
       const Text('После check-in перенести или отменить день через план нельзя.'),
-      for (var offset = 0; offset < 7; offset++) ...[
+      if (calendarView) ...[
+        PlanCalendar(
+          month: planWeek,
+          selectedDay: planWeek,
+          shifts: shifts,
+          onSelectDay: (day) => setState(() => planWeek = day),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 16, bottom: 4),
+          child: Text(_date(planWeek),
+              style: Theme.of(context).textTheme.titleMedium),
+        ),
+        if (!shifts.any((shift) => sameCalendarDay(shift.plannedStart, planWeek)))
+          const Text('На выбранный день смен нет.'),
+        for (final shift in shifts.where((item) =>
+            sameCalendarDay(item.plannedStart, planWeek)))
+          _shiftCard(shift, inPlan: true),
+      ] else for (var offset = 0; offset < 7; offset++) ...[
         Padding(
           padding: const EdgeInsets.only(top: 16, bottom: 4),
           child: Text(_date(DateTime(
