@@ -472,6 +472,235 @@ class _WorkHomeState extends State<WorkHome> {
     }
   }
 
+  Future<void> _editShift(WorkShift shift) async {
+    var projectId = shift.projectId;
+    var plannedStart = shift.plannedStart;
+    var plannedEnd = shift.plannedEnd ??
+        shift.plannedStart.add(const Duration(hours: 8));
+    var rateId = shift.rateId;
+    var creditedStart = shift.creditedStart ?? shift.plannedStart;
+    var creditedEnd = shift.creditedEnd ?? DateTime.now();
+    final breakInput = TextEditingController(text: '${shift.breakMinutes}');
+    final availableRates = rates[shift.projectId] ?? <WorkRate>[];
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, update) => AlertDialog(
+          title: const Text('Исправить смену'),
+          content: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              if (shift.status == ShiftStatus.planned)
+                DropdownButtonFormField<String>(
+                  initialValue: projectId,
+                  decoration: const InputDecoration(labelText: 'Проект'),
+                  items: projects
+                      .map((p) => DropdownMenuItem(value: p.id, child: Text(p.name)))
+                      .toList(),
+                  onChanged: (value) {
+                    if (value != null) update(() => projectId = value);
+                  },
+                ),
+              if (shift.status == ShiftStatus.planned ||
+                  shift.status == ShiftStatus.armed) ...[
+                ListTile(
+                  title: const Text('Плановое начало'),
+                  subtitle: Text(_dateTime(plannedStart)),
+                  onTap: () async {
+                    final selected = await _pickDateTime(plannedStart);
+                    if (selected != null) {
+                      update(() {
+                        final duration = plannedEnd.difference(plannedStart);
+                        plannedStart = selected;
+                        plannedEnd = selected.add(duration);
+                      });
+                    }
+                  },
+                ),
+                ListTile(
+                  title: const Text('Плановый конец'),
+                  subtitle: Text(_dateTime(plannedEnd)),
+                  onTap: () async {
+                    final selected = await _pickDateTime(plannedEnd);
+                    if (selected != null) update(() => plannedEnd = selected);
+                  },
+                ),
+              ],
+              if (shift.status != ShiftStatus.planned)
+                DropdownButtonFormField<String>(
+                  initialValue: availableRates.any((rate) => rate.id == rateId)
+                      ? rateId
+                      : null,
+                  decoration: const InputDecoration(labelText: 'Тариф'),
+                  items: availableRates
+                      .map((rate) => DropdownMenuItem(
+                            value: rate.id,
+                            child: Text('${rate.name} — '
+                                '${_money(rate.centsPerHour, rate.currency)}/ч'),
+                          ))
+                      .toList(),
+                  onChanged: (value) => update(() => rateId = value),
+                ),
+              if (shift.status == ShiftStatus.active ||
+                  shift.status == ShiftStatus.completed)
+                ListTile(
+                  title: const Text('Оплачиваемое начало'),
+                  subtitle: Text(_dateTime(creditedStart)),
+                  onTap: () async {
+                    final selected = await _pickDateTime(creditedStart);
+                    if (selected != null) update(() => creditedStart = selected);
+                  },
+                ),
+              if (shift.status == ShiftStatus.completed) ...[
+                ListTile(
+                  title: const Text('Оплачиваемый конец'),
+                  subtitle: Text(_dateTime(creditedEnd)),
+                  onTap: () async {
+                    final selected = await _pickDateTime(creditedEnd);
+                    if (selected != null) update(() => creditedEnd = selected);
+                  },
+                ),
+                TextField(
+                  controller: breakInput,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Неоплачиваемый перерыв, минуты',
+                  ),
+                ),
+              ],
+            ]),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Отмена')),
+            FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Сохранить')),
+          ],
+        ),
+      ),
+    );
+    final breakMinutes = int.tryParse(breakInput.text.trim());
+    breakInput.dispose();
+    if (saved != true) return;
+    if (shift.status != ShiftStatus.planned && rateId == null) {
+      if (mounted) _showError(context, 'Выберите тариф');
+      return;
+    }
+    if (shift.status == ShiftStatus.completed && breakMinutes == null) {
+      if (mounted) _showError(context, 'Укажите перерыв в минутах');
+      return;
+    }
+    await _perform(() async {
+      if (shift.status == ShiftStatus.planned) {
+        await widget.repository.updatePlannedShift(
+          shiftId: shift.id,
+          projectId: projectId,
+          plannedStart: plannedStart,
+          plannedEnd: plannedEnd,
+        );
+      } else if (shift.status == ShiftStatus.armed) {
+        await widget.repository.updateArmedShift(
+          shiftId: shift.id,
+          plannedStart: plannedStart,
+          plannedEnd: plannedEnd,
+          rateId: rateId!,
+        );
+        await reminders.cancel(shift.id);
+        if (plannedStart.isAfter(DateTime.now())) {
+          final result = await reminders.schedule(
+            shiftId: shift.id,
+            start: plannedStart,
+            projectName: shift.projectName,
+          );
+          if (!result.scheduled && mounted) {
+            _showError(context, 'Время изменено, но напоминание не назначено');
+          }
+        }
+      } else {
+        await widget.repository.correctWorkedShift(
+          shiftId: shift.id,
+          creditedStart: creditedStart,
+          creditedEnd: shift.status == ShiftStatus.completed ? creditedEnd : null,
+          breakMinutes: shift.status == ShiftStatus.completed ? breakMinutes! : 0,
+          rateId: rateId!,
+        );
+      }
+    });
+  }
+
+  String _auditValue(String key, Object? value) {
+    if (value == null) return '—';
+    if (key == 'project_id') {
+      for (final project in projects) {
+        if (project.id == value) return project.name;
+      }
+    }
+    if (key.endsWith('_ms')) {
+      return _dateTime(DateTime.fromMillisecondsSinceEpoch(value as int));
+    }
+    return '$value';
+  }
+
+  String _eventDetails(ShiftEvent event) {
+    if (event.before == null || event.after == null) {
+      return switch (event.kind) {
+        'planned' => 'Смена запланирована',
+        'armed' => 'Предварительный check-in',
+        'confirmed' => 'Начало подтверждено',
+        'completed' => 'Смена завершена',
+        _ => event.kind,
+      };
+    }
+    const labels = <String, String>{
+      'project_id': 'Проект',
+      'planned_start_ms': 'Плановое начало',
+      'planned_end_ms': 'Плановый конец',
+      'rate_name_snapshot': 'Тариф',
+      'rate_cents_snapshot': 'Ставка в центах',
+      'currency_snapshot': 'Валюта',
+      'credited_start_ms': 'Оплачиваемое начало',
+      'credited_end_ms': 'Оплачиваемый конец',
+      'break_minutes': 'Перерыв, мин',
+    };
+    final changes = <String>[];
+    for (final entry in labels.entries) {
+      final before = event.before![entry.key];
+      final after = event.after![entry.key];
+      if (before != after) {
+        changes.add('${entry.value}: '
+            '${_auditValue(entry.key, before)} → ${_auditValue(entry.key, after)}');
+      }
+    }
+    return changes.isEmpty ? 'Параметры смены исправлены' : changes.join('\n');
+  }
+
+  Future<void> _showHistory(WorkShift shift) async {
+    try {
+      final events = await widget.repository.shiftEvents(shift.id);
+      if (!mounted) return;
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        builder: (context) => SafeArea(
+          child: SizedBox(
+            height: MediaQuery.sizeOf(context).height * 0.7,
+            child: ListView(children: [
+              const ListTile(title: Text('История смены')),
+              for (final event in events)
+                ListTile(
+                  title: Text(_dateTime(event.recordedAt)),
+                  subtitle: Text(_eventDetails(event)),
+                ),
+            ]),
+          ),
+        ),
+      );
+    } catch (error) {
+      if (mounted) _showError(context, error);
+    }
+  }
+
   Widget _shiftCard(WorkShift shift) {
     final status = switch (shift.status) {
       ShiftStatus.planned => 'План',
@@ -506,6 +735,18 @@ class _WorkHomeState extends State<WorkHome> {
                 child: const Text('Check-out')),
             _ => const SizedBox.shrink(),
           },
+          Wrap(spacing: 8, children: [
+            TextButton.icon(
+              onPressed: () => _editShift(shift),
+              icon: const Icon(Icons.edit_outlined),
+              label: const Text('Исправить'),
+            ),
+            TextButton.icon(
+              onPressed: () => _showHistory(shift),
+              icon: const Icon(Icons.history),
+              label: const Text('История'),
+            ),
+          ]),
         ]),
       ),
     );
