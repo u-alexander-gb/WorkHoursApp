@@ -29,6 +29,90 @@ int? _parseCents(String input) {
       (parts.length == 1 ? 0 : int.parse(parts.last.padRight(2, '0')));
 }
 
+/// Keep form controllers alive until the dialog's exit animation removes it.
+Future<T?> _showFormDialog<T>(BuildContext context,
+    {required WidgetBuilder builder}) async {
+  final route = DialogRoute<T>(context: context, builder: builder);
+  final result = await Navigator.of(context, rootNavigator: true).push(route);
+  await route.completed;
+  return result;
+}
+
+class _BackupPasswordDialog extends StatefulWidget {
+  const _BackupPasswordDialog({required this.create});
+
+  final bool create;
+
+  @override
+  State<_BackupPasswordDialog> createState() => _BackupPasswordDialogState();
+}
+
+class _BackupPasswordDialogState extends State<_BackupPasswordDialog> {
+  final password = TextEditingController();
+  final repeated = TextEditingController();
+  bool hidden = true;
+
+  @override
+  void dispose() {
+    password.dispose();
+    repeated.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: Text(widget.create
+            ? 'Пароль резервной копии'
+            : 'Открыть резервную копию'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text(widget.create
+              ? 'Запомните пароль: без него восстановить копию нельзя. Минимум 12 символов.'
+              : 'Введите пароль для проверки и просмотра копии.'),
+          TextField(
+            controller: password,
+            obscureText: hidden,
+            autofocus: true,
+            decoration: const InputDecoration(labelText: 'Пароль'),
+            onChanged: (_) => setState(() {}),
+          ),
+          if (widget.create)
+            TextField(
+              controller: repeated,
+              obscureText: hidden,
+              decoration: InputDecoration(
+                labelText: 'Повторите пароль',
+                errorText: repeated.text.isNotEmpty &&
+                        repeated.text != password.text
+                    ? 'Пароли не совпадают'
+                    : null,
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
+          CheckboxListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Показать пароль'),
+            value: !hidden,
+            onChanged: (value) => setState(() => hidden = value != true),
+          ),
+        ]),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: password.text.isEmpty ||
+                    (widget.create &&
+                        (password.text.length < 12 ||
+                            repeated.text != password.text))
+                ? null
+                : () => Navigator.pop(context, password.text),
+            child: Text(widget.create ? 'Продолжить' : 'Проверить'),
+          ),
+        ],
+      );
+}
+
 class WorkHoursApp extends StatefulWidget {
   const WorkHoursApp({super.key});
 
@@ -125,66 +209,10 @@ class _WorkHomeState extends State<WorkHome> {
   }
 
   Future<String?> _askBackupPassword({required bool create}) async {
-    final password = TextEditingController();
-    final repeated = TextEditingController();
-    var hidden = true;
-    final result = await showDialog<String>(
+    return showDialog<String>(
       context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, update) => AlertDialog(
-          title: Text(create ? 'Пароль резервной копии' : 'Открыть резервную копию'),
-          content: Column(mainAxisSize: MainAxisSize.min, children: [
-            Text(create
-                ? 'Запомните пароль: без него восстановить копию нельзя. Минимум 12 символов.'
-                : 'Введите пароль для проверки и просмотра копии.'),
-            TextField(
-              controller: password,
-              obscureText: hidden,
-              autofocus: true,
-              decoration: const InputDecoration(labelText: 'Пароль'),
-              onChanged: (_) => update(() {}),
-            ),
-            if (create)
-              TextField(
-                controller: repeated,
-                obscureText: hidden,
-                decoration: InputDecoration(
-                  labelText: 'Повторите пароль',
-                  errorText: repeated.text.isNotEmpty &&
-                          repeated.text != password.text
-                      ? 'Пароли не совпадают'
-                      : null,
-                ),
-                onChanged: (_) => update(() {}),
-              ),
-            CheckboxListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Показать пароль'),
-              value: !hidden,
-              onChanged: (value) => update(() => hidden = value != true),
-            ),
-          ]),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Отмена'),
-            ),
-            FilledButton(
-              onPressed: password.text.isEmpty ||
-                      (create &&
-                          (password.text.length < 12 ||
-                              repeated.text != password.text))
-                  ? null
-                  : () => Navigator.pop(dialogContext, password.text),
-              child: Text(create ? 'Продолжить' : 'Проверить'),
-            ),
-          ],
-        ),
-      ),
+      builder: (_) => _BackupPasswordDialog(create: create),
     );
-    password.dispose();
-    repeated.dispose();
-    return result;
   }
 
   Future<void> _exportBackup() async {
@@ -338,8 +366,8 @@ class _WorkHomeState extends State<WorkHome> {
   Future<void> _createProject() async {
     final controller = TextEditingController();
     var trackPay = false;
-    final result = await showDialog<(String, bool)>(
-      context: context,
+    final result = await _showFormDialog<(String, bool)>(
+      context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, update) => AlertDialog(
           title: const Text('Новый проект'),
@@ -376,8 +404,8 @@ class _WorkHomeState extends State<WorkHome> {
   Future<void> _createRate(WorkProject project) async {
     final name = TextEditingController();
     final amount = TextEditingController();
-    final result = await showDialog<(String, String)>(
-      context: context,
+    final result = await _showFormDialog<(String, String)>(
+      context,
       builder: (context) => AlertDialog(
         title: Text('Тариф: ${project.name}'),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -584,8 +612,8 @@ class _WorkHomeState extends State<WorkHome> {
   Future<void> _checkOut(WorkShift shift) async {
     final breakInput = TextEditingController(text: '0');
     var end = DateTime.now();
-    final result = await showDialog<(DateTime, int)>(
-      context: context,
+    final result = await _showFormDialog<(DateTime, int)>(
+      context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, update) => AlertDialog(
           title: const Text('Завершить смену'),
@@ -645,8 +673,8 @@ class _WorkHomeState extends State<WorkHome> {
     final breakInput = TextEditingController(text: '${shift.breakMinutes}');
     final reasonInput = TextEditingController();
     final availableRates = rates[shift.projectId] ?? <WorkRate>[];
-    final saved = await showDialog<bool>(
-      context: context,
+    final saved = await _showFormDialog<bool>(
+      context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, update) => AlertDialog(
           title: const Text('Исправить смену'),
@@ -829,8 +857,8 @@ class _WorkHomeState extends State<WorkHome> {
 
   Future<void> _cancelPlannedShift(WorkShift shift) async {
     final reasonInput = TextEditingController();
-    final confirmed = await showDialog<bool>(
-      context: context,
+    final confirmed = await _showFormDialog<bool>(
+      context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Отменить плановую смену?'),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
