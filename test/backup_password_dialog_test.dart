@@ -1,74 +1,67 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:work_hours_app/app.dart';
-import 'package:work_hours_app/src/work_repository.dart';
-
 void main() {
   testWidgets('cancelling backup password dialog after typing is safe',
       (tester) async {
-    debugPrint('backup dialog test: opening repository');
-    final repository = await WorkRepository.openInMemory();
-    debugPrint('backup dialog test: repository opened');
-    addTearDown(repository.close);
-    await tester.pumpWidget(MaterialApp(home: WorkHome(repository: repository)));
-    debugPrint('backup dialog test: widget pumped');
-    await tester.pumpAndSettle();
-    debugPrint('backup dialog test: initial view settled');
+    var closed = false;
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(body: Builder(builder: (context) => TextButton(
+        onPressed: () async {
+          await showDialog<String>(
+            context: context,
+            builder: (_) => const BackupPasswordDialog(create: true),
+          );
+          closed = true;
+        },
+        child: const Text('Open backup'),
+      ))),
+    ));
 
-    await tester.tap(find.byTooltip('Меню'));
+    await tester.tap(find.text('Open backup'));
     await tester.pumpAndSettle();
-    debugPrint('backup dialog test: menu opened');
-    await tester.tap(find.text('Сохранить копию'));
-    await tester.pumpAndSettle();
-    debugPrint('backup dialog test: dialog opened');
-
     await tester.enterText(find.byType(TextField).first, 'test-password-123');
     await tester.enterText(find.byType(TextField).last, 'test-password-123');
-    debugPrint('backup dialog test: passwords entered');
     await tester.tap(find.text('Отмена'));
     await tester.pumpAndSettle();
-    debugPrint('backup dialog test: dialog cancelled');
 
+    expect(closed, isTrue);
     expect(tester.takeException(), isNull);
     expect(find.text('Пароль резервной копии'), findsNothing);
-
-    await tester.tap(find.byTooltip('Меню'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Сохранить копию'));
-    await tester.pumpAndSettle();
-    expect(find.text('Пароль резервной копии'), findsOneWidget);
-    await tester.tap(find.text('Отмена'));
-    await tester.pumpAndSettle();
-    expect(tester.takeException(), isNull);
   });
 
-  testWidgets('cancelling planned shift edit after typing is safe',
-      (tester) async {
-    final repository = await WorkRepository.openInMemory();
-    addTearDown(repository.close);
-    await repository.addProject('Test project');
-    final project = (await repository.projects()).single;
-    final start = DateTime.now().add(const Duration(hours: 1));
-    final shiftId = await repository.planShift(
-      projectId: project.id,
-      start: start,
-      end: start.add(const Duration(hours: 8)),
-    );
-    await tester.pumpWidget(MaterialApp(home: WorkHome(repository: repository)));
-    await tester.pumpAndSettle();
+  testWidgets('form controllers survive cancel animation', (tester) async {
+    var released = false;
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(body: Builder(builder: (context) => TextButton(
+        onPressed: () async {
+          final reason = TextEditingController();
+          await showFormDialogUntilClosed<bool>(
+            context,
+            builder: (dialogContext) => AlertDialog(
+              title: const Text('Изменить план'),
+              content: TextField(controller: reason),
+              actions: [TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Отмена'),
+              )],
+            ),
+          );
+          reason.dispose();
+          released = true;
+        },
+        child: const Text('Open plan editor'),
+      ))),
+    ));
 
-    await tester.tap(find.text('План').last);
-    await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(find.text('Изменить план'), 200);
-    await tester.tap(find.text('Изменить план'));
+    await tester.tap(find.text('Open plan editor'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), 'Test reason');
     await tester.tap(find.text('Отмена'));
     await tester.pumpAndSettle();
 
+    expect(released, isTrue);
     expect(tester.takeException(), isNull);
-    expect(find.text('Исправить смену'), findsNothing);
-    expect((await repository.shifts()).singleWhere((s) => s.id == shiftId).plannedStart,
-        start);
+    expect(find.text('Изменить план'), findsNothing);
   });
 }

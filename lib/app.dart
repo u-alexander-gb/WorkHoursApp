@@ -30,7 +30,7 @@ int? _parseCents(String input) {
 }
 
 /// Keep form controllers alive until the dialog's exit animation removes it.
-Future<T?> _showFormDialog<T>(BuildContext context,
+Future<T?> showFormDialogUntilClosed<T>(BuildContext context,
     {required WidgetBuilder builder}) async {
   final route = DialogRoute<T>(context: context, builder: builder);
   final result = await Navigator.of(context, rootNavigator: true).push(route);
@@ -38,16 +38,16 @@ Future<T?> _showFormDialog<T>(BuildContext context,
   return result;
 }
 
-class _BackupPasswordDialog extends StatefulWidget {
-  const _BackupPasswordDialog({required this.create});
+class BackupPasswordDialog extends StatefulWidget {
+  const BackupPasswordDialog({super.key, required this.create});
 
   final bool create;
 
   @override
-  State<_BackupPasswordDialog> createState() => _BackupPasswordDialogState();
+  State<BackupPasswordDialog> createState() => _BackupPasswordDialogState();
 }
 
-class _BackupPasswordDialogState extends State<_BackupPasswordDialog> {
+class _BackupPasswordDialogState extends State<BackupPasswordDialog> {
   final password = TextEditingController();
   final repeated = TextEditingController();
   bool hidden = true;
@@ -211,7 +211,7 @@ class _WorkHomeState extends State<WorkHome> {
   Future<String?> _askBackupPassword({required bool create}) async {
     return showDialog<String>(
       context: context,
-      builder: (_) => _BackupPasswordDialog(create: create),
+      builder: (_) => BackupPasswordDialog(create: create),
     );
   }
 
@@ -366,7 +366,7 @@ class _WorkHomeState extends State<WorkHome> {
   Future<void> _createProject() async {
     final controller = TextEditingController();
     var trackPay = false;
-    final result = await _showFormDialog<(String, bool)>(
+    final result = await showFormDialogUntilClosed<(String, bool)>(
       context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, update) => AlertDialog(
@@ -404,7 +404,7 @@ class _WorkHomeState extends State<WorkHome> {
   Future<void> _createRate(WorkProject project) async {
     final name = TextEditingController();
     final amount = TextEditingController();
-    final result = await _showFormDialog<(String, String)>(
+    final result = await showFormDialogUntilClosed<(String, String)>(
       context,
       builder: (context) => AlertDialog(
         title: Text('Тариф: ${project.name}'),
@@ -612,7 +612,7 @@ class _WorkHomeState extends State<WorkHome> {
   Future<void> _checkOut(WorkShift shift) async {
     final breakInput = TextEditingController(text: '0');
     var end = DateTime.now();
-    final result = await _showFormDialog<(DateTime, int)>(
+    final result = await showFormDialogUntilClosed<(DateTime, int)>(
       context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, update) => AlertDialog(
@@ -673,7 +673,7 @@ class _WorkHomeState extends State<WorkHome> {
     final breakInput = TextEditingController(text: '${shift.breakMinutes}');
     final reasonInput = TextEditingController();
     final availableRates = rates[shift.projectId] ?? <WorkRate>[];
-    final saved = await _showFormDialog<bool>(
+    final saved = await showFormDialogUntilClosed<bool>(
       context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, update) => AlertDialog(
@@ -857,7 +857,7 @@ class _WorkHomeState extends State<WorkHome> {
 
   Future<void> _cancelPlannedShift(WorkShift shift) async {
     final reasonInput = TextEditingController();
-    final confirmed = await _showFormDialog<bool>(
+    final confirmed = await showFormDialogUntilClosed<bool>(
       context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Отменить плановую смену?'),
