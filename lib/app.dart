@@ -215,7 +215,9 @@ class _WorkHomeState extends State<WorkHome> {
     try {
       await preferences.setBool('plan_calendar_view', value);
     } catch (error) {
-      if (mounted) _showError(context, 'Не удалось сохранить вид плана: $error');
+      if (mounted) {
+        _showError(context, 'Не удалось сохранить вид плана: $error');
+      }
     }
   }
 
@@ -1039,7 +1041,9 @@ class _WorkHomeState extends State<WorkHome> {
     final now = DateTime.now();
     final active = shift.status == ShiftStatus.active;
     if (!active && shift.status != ShiftStatus.planned &&
-        shift.status != ShiftStatus.armed) return null;
+        shift.status != ShiftStatus.armed) {
+      return null;
+    }
     final due = active ? shift.plannedEnd : shift.plannedStart;
     if (due == null) return null;
     final begin = active
@@ -1085,7 +1089,7 @@ class _WorkHomeState extends State<WorkHome> {
             const SizedBox(width: 6),
             Expanded(child: Text('${_dateTime(shift.plannedStart)} · $status')),
           ])),
-          if (countdown != null) countdown,
+          ?countdown,
           if (shift.status == ShiftStatus.armed &&
               shift.plannedStart.isBefore(DateTime.now()))
             const Text('Плановое начало прошло. Подтвердите прибытие.'),
