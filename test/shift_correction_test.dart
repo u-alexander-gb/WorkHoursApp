@@ -26,11 +26,24 @@ void main() {
       final id = (await repository.shifts()).single.id;
       final changedStart = start.add(const Duration(hours: 2));
 
+      await expectLater(
+        repository.updatePlannedShift(
+          shiftId: id,
+          projectId: second.id,
+          plannedStart: changedStart,
+          plannedEnd: changedStart.subtract(const Duration(minutes: 1)),
+          reason: 'Неверное время',
+        ),
+        throwsArgumentError,
+      );
+      expect((await repository.shiftEvents(id)).length, 1);
+
       await repository.updatePlannedShift(
         shiftId: id,
         projectId: second.id,
         plannedStart: changedStart,
         plannedEnd: changedStart.add(const Duration(hours: 6)),
+        reason: 'Сменили проект',
       );
 
       final shift = (await repository.shifts()).single;
@@ -41,6 +54,7 @@ void main() {
       expect(events.first.kind, 'corrected');
       expect(events.first.before!['project_id'], first.id);
       expect(events.first.after!['project_id'], second.id);
+      expect(events.first.reason, 'Сменили проект');
       expect(events.last.kind, 'planned');
     });
 
@@ -70,6 +84,7 @@ void main() {
           plannedStart: start,
           plannedEnd: start.add(const Duration(hours: 8)),
           rateId: foreignRate.id,
+          reason: 'Проверка тарифа',
         ),
         throwsStateError,
       );
@@ -81,6 +96,7 @@ void main() {
         plannedStart: changedStart,
         plannedEnd: changedStart.add(const Duration(hours: 8)),
         rateId: secondRate.id,
+        reason: 'Другое время и тариф',
       );
       final shift = (await repository.shifts()).single;
       expect(shift.preCheckInAt, checkInAt);
@@ -109,12 +125,26 @@ void main() {
           breakMinutes: 0);
       final original = (await repository.shifts()).single;
 
+      await expectLater(
+        repository.correctWorkedShift(
+          shiftId: id,
+          creditedStart: start,
+          creditedEnd: start.add(const Duration(hours: 1)),
+          breakMinutes: 61,
+          rateId: secondRate.id,
+          reason: 'Неверный перерыв',
+        ),
+        throwsArgumentError,
+      );
+      expect((await repository.shiftEvents(id)).length, 4);
+
       await repository.correctWorkedShift(
         shiftId: id,
         creditedStart: start.add(const Duration(hours: 1)),
         creditedEnd: start.add(const Duration(hours: 6)),
         breakMinutes: 30,
         rateId: secondRate.id,
+        reason: 'Уточнил табель',
       );
 
       final corrected = (await repository.shifts()).single;
@@ -126,6 +156,54 @@ void main() {
       final event = (await repository.shiftEvents(id)).first;
       expect(event.before!['break_minutes'], 0);
       expect(event.after!['break_minutes'], 30);
+      expect(event.reason, 'Уточнил табель');
+
+      final backup = await repository.exportBackup();
+      await repository.restoreBackup(backup);
+      expect((await repository.shifts()).single.earnedCents, 9000);
+      expect((await repository.shiftEvents(id)).first.reason, 'Уточнил табель');
+    });
+
+    test('active correction changes start and tariff but not confirmation', () async {
+      await repository.addProject('Проект');
+      final project = (await repository.projects()).single;
+      await repository.addRate(
+          projectId: project.id, name: 'Обычный', centsPerHour: 1000);
+      await repository.addRate(
+          projectId: project.id, name: 'Повышенный', centsPerHour: 2000);
+      final available = await repository.rates(project.id);
+      final start = DateTime.now().subtract(const Duration(hours: 3));
+      await repository.planShift(projectId: project.id, start: start);
+      final id = (await repository.shifts()).single.id;
+      await repository.armShift(id, available.first.id);
+      await repository.confirmStart(id, start);
+      final original = (await repository.shifts()).single;
+
+      await expectLater(
+        repository.correctWorkedShift(
+          shiftId: id,
+          creditedStart: start,
+          creditedEnd: DateTime.now(),
+          breakMinutes: 0,
+          rateId: available.last.id,
+          reason: 'Недопустимый конец',
+        ),
+        throwsArgumentError,
+      );
+      await repository.correctWorkedShift(
+        shiftId: id,
+        creditedStart: start.add(const Duration(minutes: 30)),
+        creditedEnd: null,
+        breakMinutes: 0,
+        rateId: available.last.id,
+        reason: 'Исправил начало',
+      );
+      final corrected = (await repository.shifts()).single;
+      expect(corrected.status, ShiftStatus.active);
+      expect(corrected.confirmedAt, original.confirmedAt);
+      expect(corrected.creditedEnd, isNull);
+      expect(corrected.rateId, available.last.id);
+      expect((await repository.shiftEvents(id)).first.reason, 'Исправил начало');
     });
 
     test('old version 1 backup can be restored and corrected', () async {
@@ -151,6 +229,7 @@ void main() {
         projectId: project.id,
         plannedStart: start.add(const Duration(hours: 1)),
         plannedEnd: start.add(const Duration(hours: 9)),
+        reason: 'Уточнил план',
       );
       expect((await repository.shiftEvents(id)).first.kind, 'corrected');
       expect(jsonDecode(await repository.exportBackup())['version'], 2);

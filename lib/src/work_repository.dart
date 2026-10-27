@@ -91,12 +91,14 @@ class ShiftEvent {
   const ShiftEvent({
     required this.kind,
     required this.recordedAt,
+    required this.reason,
     required this.before,
     required this.after,
   });
 
   final String kind;
   final DateTime recordedAt;
+  final String? reason;
   final Map<String, Object?>? before;
   final Map<String, Object?>? after;
 }
@@ -250,6 +252,15 @@ class WorkRepository {
         if (decoded['version'] == 1 && entry.key == 'shift_events') {
           row['details_json'] = null;
         }
+        if (entry.key == 'shift_events' && row['details_json'] is String) {
+          final details = jsonDecode(row['details_json'] as String);
+          if (details is! Map<String, dynamic> ||
+              details['reason'] is! String ||
+              details['before'] is! Map ||
+              details['after'] is! Map) {
+            throw const FormatException('Повреждена история исправлений');
+          }
+        }
         rows.add(row);
       }
       tables[entry.key] = rows;
@@ -303,6 +314,7 @@ class WorkRepository {
       return ShiftEvent(
         kind: row['kind'] as String,
         recordedAt: DateTime.fromMillisecondsSinceEpoch(row['recorded_ms'] as int),
+        reason: details?['reason'] as String?,
         before: details == null
             ? null
             : Map<String, Object?>.from(details['before'] as Map),
@@ -436,6 +448,7 @@ class WorkRepository {
     required String projectId,
     required DateTime plannedStart,
     required DateTime plannedEnd,
+    required String reason,
   }) async {
     _validatePlan(plannedStart, plannedEnd);
     await _db.transaction((tx) async {
@@ -447,7 +460,7 @@ class WorkRepository {
         'project_id': projectId,
         'planned_start_ms': plannedStart.millisecondsSinceEpoch,
         'planned_end_ms': plannedEnd.millisecondsSinceEpoch,
-      });
+      }, reason);
     });
   }
 
@@ -456,6 +469,7 @@ class WorkRepository {
     required DateTime plannedStart,
     required DateTime plannedEnd,
     required String rateId,
+    required String reason,
   }) async {
     _validatePlan(plannedStart, plannedEnd);
     await _db.transaction((tx) async {
@@ -465,7 +479,7 @@ class WorkRepository {
         'planned_start_ms': plannedStart.millisecondsSinceEpoch,
         'planned_end_ms': plannedEnd.millisecondsSinceEpoch,
         ..._rateSnapshot(rate),
-      });
+      }, reason);
     });
   }
 
@@ -475,6 +489,7 @@ class WorkRepository {
     required DateTime? creditedEnd,
     required int breakMinutes,
     required String rateId,
+    required String reason,
   }) async {
     if (creditedStart.isAfter(DateTime.now().add(const Duration(minutes: 1)))) {
       throw ArgumentError('Начало работы не может быть в будущем');
@@ -506,7 +521,7 @@ class WorkRepository {
         'credited_end_ms': creditedEnd?.millisecondsSinceEpoch,
         'break_minutes': breakMinutes,
         ..._rateSnapshot(rate),
-      });
+      }, reason);
     });
   }
 
@@ -533,7 +548,11 @@ class WorkRepository {
       };
 
   Future<void> _updateWithAudit(Transaction tx, String shiftId,
-      Map<String, Object?> before, Map<String, Object?> changes) async {
+      Map<String, Object?> before, Map<String, Object?> changes,
+      String reason) async {
+    if (reason.trim().isEmpty) {
+      throw ArgumentError('Укажите причину исправления');
+    }
     final after = {...before, ...changes};
     final oldValues = _auditValues(before);
     final newValues = _auditValues(after);
@@ -544,7 +563,11 @@ class WorkRepository {
       'shift_id': shiftId,
       'kind': 'corrected',
       'recorded_ms': DateTime.now().millisecondsSinceEpoch,
-      'details_json': jsonEncode({'before': oldValues, 'after': newValues}),
+      'details_json': jsonEncode({
+        'reason': reason.trim(),
+        'before': oldValues,
+        'after': newValues,
+      }),
     });
   }
 

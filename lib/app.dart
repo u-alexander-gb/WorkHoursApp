@@ -481,6 +481,7 @@ class _WorkHomeState extends State<WorkHome> {
     var creditedStart = shift.creditedStart ?? shift.plannedStart;
     var creditedEnd = shift.creditedEnd ?? DateTime.now();
     final breakInput = TextEditingController(text: '${shift.breakMinutes}');
+    final reasonInput = TextEditingController();
     final availableRates = rates[shift.projectId] ?? <WorkRate>[];
     final saved = await showDialog<bool>(
       context: context,
@@ -497,7 +498,9 @@ class _WorkHomeState extends State<WorkHome> {
                       .map((p) => DropdownMenuItem(value: p.id, child: Text(p.name)))
                       .toList(),
                   onChanged: (value) {
-                    if (value != null) update(() => projectId = value);
+                    if (value != null) {
+                      update(() => projectId = value);
+                    }
                   },
                 ),
               if (shift.status == ShiftStatus.planned ||
@@ -521,7 +524,9 @@ class _WorkHomeState extends State<WorkHome> {
                   subtitle: Text(_dateTime(plannedEnd)),
                   onTap: () async {
                     final selected = await _pickDateTime(plannedEnd);
-                    if (selected != null) update(() => plannedEnd = selected);
+                    if (selected != null) {
+                      update(() => plannedEnd = selected);
+                    }
                   },
                 ),
               ],
@@ -547,7 +552,9 @@ class _WorkHomeState extends State<WorkHome> {
                   subtitle: Text(_dateTime(creditedStart)),
                   onTap: () async {
                     final selected = await _pickDateTime(creditedStart);
-                    if (selected != null) update(() => creditedStart = selected);
+                    if (selected != null) {
+                      update(() => creditedStart = selected);
+                    }
                   },
                 ),
               if (shift.status == ShiftStatus.completed) ...[
@@ -556,7 +563,9 @@ class _WorkHomeState extends State<WorkHome> {
                   subtitle: Text(_dateTime(creditedEnd)),
                   onTap: () async {
                     final selected = await _pickDateTime(creditedEnd);
-                    if (selected != null) update(() => creditedEnd = selected);
+                    if (selected != null) {
+                      update(() => creditedEnd = selected);
+                    }
                   },
                 ),
                 TextField(
@@ -567,6 +576,13 @@ class _WorkHomeState extends State<WorkHome> {
                   ),
                 ),
               ],
+              TextField(
+                controller: reasonInput,
+                decoration: const InputDecoration(
+                  labelText: 'Причина исправления',
+                  hintText: 'Например: ошибся во времени',
+                ),
+              ),
             ]),
           ),
           actions: [
@@ -581,8 +597,14 @@ class _WorkHomeState extends State<WorkHome> {
       ),
     );
     final breakMinutes = int.tryParse(breakInput.text.trim());
+    final reason = reasonInput.text.trim();
     breakInput.dispose();
+    reasonInput.dispose();
     if (saved != true) return;
+    if (reason.isEmpty) {
+      if (mounted) _showError(context, 'Укажите причину исправления');
+      return;
+    }
     if (shift.status != ShiftStatus.planned && rateId == null) {
       if (mounted) _showError(context, 'Выберите тариф');
       return;
@@ -598,6 +620,7 @@ class _WorkHomeState extends State<WorkHome> {
           projectId: projectId,
           plannedStart: plannedStart,
           plannedEnd: plannedEnd,
+          reason: reason,
         );
       } else if (shift.status == ShiftStatus.armed) {
         await widget.repository.updateArmedShift(
@@ -605,6 +628,7 @@ class _WorkHomeState extends State<WorkHome> {
           plannedStart: plannedStart,
           plannedEnd: plannedEnd,
           rateId: rateId!,
+          reason: reason,
         );
         await reminders.cancel(shift.id);
         if (plannedStart.isAfter(DateTime.now())) {
@@ -624,6 +648,7 @@ class _WorkHomeState extends State<WorkHome> {
           creditedEnd: shift.status == ShiftStatus.completed ? creditedEnd : null,
           breakMinutes: shift.status == ShiftStatus.completed ? breakMinutes! : 0,
           rateId: rateId!,
+          reason: reason,
         );
       }
     });
@@ -672,7 +697,8 @@ class _WorkHomeState extends State<WorkHome> {
             '${_auditValue(entry.key, before)} → ${_auditValue(entry.key, after)}');
       }
     }
-    return changes.isEmpty ? 'Параметры смены исправлены' : changes.join('\n');
+    final reason = event.reason == null ? '' : 'Причина: ${event.reason}\n';
+    return '$reason${changes.isEmpty ? 'Параметры смены исправлены' : changes.join('\n')}';
   }
 
   Future<void> _showHistory(WorkShift shift) async {
