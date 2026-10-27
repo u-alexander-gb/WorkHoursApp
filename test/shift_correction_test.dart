@@ -72,7 +72,8 @@ void main() {
       final firstRate = rates.first;
       final secondRate = rates.last;
       final foreignRate = (await repository.rates(b.id)).single;
-      final start = DateTime.now().add(const Duration(days: 1));
+      final tomorrow = DateTime.now().add(const Duration(days: 1));
+      final start = DateTime(tomorrow.year, tomorrow.month, tomorrow.day, 10);
       await repository.planShift(projectId: a.id, start: start);
       final id = (await repository.shifts()).single.id;
       await repository.armShift(id, firstRate.id);
