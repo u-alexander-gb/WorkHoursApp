@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:cryptography/cryptography.dart';
-import 'package:cryptography_flutter/cryptography_flutter.dart';
 
 /// Password-protected, authenticated container for a repository JSON backup.
 class BackupCodec {
@@ -79,8 +78,7 @@ class BackupCodec {
   }
 
   static Future<SecretKey> _deriveKey(String password, List<int> salt) =>
-      FlutterPbkdf2(
-        macAlgorithm: Hmac.sha256(),
+      Pbkdf2.hmacSha256(
         iterations: _iterations,
         bits: 256,
       ).deriveKeyFromPassword(password: password, nonce: salt);
