@@ -20,8 +20,12 @@ jobs:
         run: dart format lib test
       - name: Analyze
         run: flutter analyze
+      - name: Test dialog cancellation
+        run: flutter test test/backup_password_dialog_test.dart --reporter expanded --timeout 45s
+        timeout-minutes: 3
       - name: Test
-        run: flutter test
+        run: flutter test --reporter expanded --timeout 45s
+        timeout-minutes: 5
       - name: Build debug APK
         run: flutter build apk --debug
       - name: Save APK
