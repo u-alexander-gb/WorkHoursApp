@@ -22,7 +22,7 @@ jobs:
         run: flutter analyze
       - name: Test dialog cancellation
         run: flutter test test/backup_password_dialog_test.dart --reporter expanded --timeout 45s
-        timeout-minutes: 3
+        timeout-minutes: 1
       - name: Test
         run: flutter test --reporter expanded --timeout 45s
         timeout-minutes: 5
