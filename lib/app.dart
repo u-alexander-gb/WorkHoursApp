@@ -1017,18 +1017,20 @@ class _WorkHomeState extends State<WorkHome> {
   Widget _planPage() {
     final monday = DateTime(planWeek.year, planWeek.month,
         planWeek.day - planWeek.weekday + DateTime.monday);
-    final sunday = monday.add(const Duration(days: 6));
+    final sunday = DateTime(monday.year, monday.month, monday.day + 6);
     return ListView(padding: const EdgeInsets.all(16), children: [
       Text('План на неделю', style: Theme.of(context).textTheme.headlineSmall),
       Row(children: [
         IconButton(
-          onPressed: () => setState(() => planWeek = monday.subtract(const Duration(days: 7))),
+          onPressed: () => setState(() => planWeek =
+              DateTime(monday.year, monday.month, monday.day - 7)),
           icon: const Icon(Icons.chevron_left),
         ),
         Expanded(child: Text('${_date(monday)} — ${_date(sunday)}',
             textAlign: TextAlign.center)),
         IconButton(
-          onPressed: () => setState(() => planWeek = monday.add(const Duration(days: 7))),
+          onPressed: () => setState(() => planWeek =
+              DateTime(monday.year, monday.month, monday.day + 7)),
           icon: const Icon(Icons.chevron_right),
         ),
       ]),
@@ -1041,11 +1043,12 @@ class _WorkHomeState extends State<WorkHome> {
       for (var offset = 0; offset < 7; offset++) ...[
         Padding(
           padding: const EdgeInsets.only(top: 16, bottom: 4),
-          child: Text(_date(monday.add(Duration(days: offset))),
+          child: Text(_date(DateTime(
+              monday.year, monday.month, monday.day + offset)),
               style: Theme.of(context).textTheme.titleMedium),
         ),
         for (final shift in shifts.where((item) {
-          final day = monday.add(Duration(days: offset));
+          final day = DateTime(monday.year, monday.month, monday.day + offset);
           return item.plannedStart.year == day.year &&
               item.plannedStart.month == day.month &&
               item.plannedStart.day == day.day;
