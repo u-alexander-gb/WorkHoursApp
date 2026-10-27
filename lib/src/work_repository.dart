@@ -13,9 +13,10 @@ String _newId() {
 enum ShiftStatus { planned, armed, active, completed, cancelled }
 
 class WorkProject {
-  const WorkProject({required this.id, required this.name});
+  const WorkProject({required this.id, required this.name, required this.trackPay});
   final String id;
   final String name;
+  final bool trackPay;
 }
 
 class WorkRate {
@@ -103,6 +104,13 @@ class ShiftEvent {
   final Map<String, Object?>? after;
 }
 
+class ProjectEvent {
+  const ProjectEvent({required this.recordedAt, required this.description});
+
+  final DateTime recordedAt;
+  final String description;
+}
+
 class BackupPreview {
   const BackupPreview({required this.createdAt, required this.counts});
 
@@ -122,7 +130,7 @@ class WorkRepository {
   final Database _db;
 
   static const _backupColumns = <String, List<String>>{
-    'projects': ['id', 'name', 'archived'],
+    'projects': ['id', 'name', 'archived', 'track_pay'],
     'rates': [
       'id', 'project_id', 'name', 'cents_per_hour', 'currency', 'archived'
     ],
@@ -136,6 +144,9 @@ class WorkRepository {
     'shift_events': [
       'id', 'shift_id', 'kind', 'recorded_ms', 'credited_ms', 'details_json'
     ],
+    'project_events': [
+      'id', 'project_id', 'recorded_ms', 'description'
+    ],
   };
 
   static Future<WorkRepository> open({String? databasePath}) async {
@@ -148,7 +159,7 @@ class WorkRepository {
         '$directory${Platform.pathSeparator}work_hours.db';
     final db = await openDatabase(
       path,
-      version: 2,
+      version: 3,
       onConfigure: (db) => db.execute('PRAGMA foreign_keys = ON'),
       onCreate: _createSchema,
       onUpgrade: _upgradeSchema,
@@ -161,7 +172,7 @@ class WorkRepository {
     databaseFactory = databaseFactoryFfi;
     final db = await openDatabase(
       inMemoryDatabasePath,
-      version: 2,
+      version: 3,
       onConfigure: (db) => db.execute('PRAGMA foreign_keys = ON'),
       onCreate: _createSchema,
       onUpgrade: _upgradeSchema,
@@ -174,7 +185,8 @@ class WorkRepository {
           CREATE TABLE projects (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
-            archived INTEGER NOT NULL DEFAULT 0
+            archived INTEGER NOT NULL DEFAULT 0,
+            track_pay INTEGER NOT NULL DEFAULT 0
           )
         ''');
         await db.execute('''
@@ -216,11 +228,30 @@ class WorkRepository {
             details_json TEXT
           )
         ''');
+        await db.execute('''
+          CREATE TABLE project_events (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL REFERENCES projects(id),
+            recorded_ms INTEGER NOT NULL,
+            description TEXT NOT NULL
+          )
+        ''');
   }
 
   static Future<void> _upgradeSchema(Database db, int oldVersion, int newVersion) async {
     if (oldVersion < 2) {
       await db.execute('ALTER TABLE shift_events ADD COLUMN details_json TEXT');
+    }
+    if (oldVersion < 3) {
+      await db.execute('ALTER TABLE projects ADD COLUMN track_pay INTEGER NOT NULL DEFAULT 1');
+      await db.execute('''
+        CREATE TABLE project_events (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL REFERENCES projects(id),
+          recorded_ms INTEGER NOT NULL,
+          description TEXT NOT NULL
+        )
+      ''');
     }
   }
 
@@ -233,7 +264,7 @@ class WorkRepository {
     }
     return jsonEncode({
       'format': 'work-hours-backup',
-      'version': 2,
+      'version': 3,
       'createdAt': DateTime.now().toUtc().toIso8601String(),
       'tables': tables,
     });
@@ -246,7 +277,9 @@ class WorkRepository {
     final Object? decoded = jsonDecode(contents);
     if (decoded is! Map<String, dynamic> ||
         decoded['format'] != 'work-hours-backup' ||
-        (decoded['version'] != 1 && decoded['version'] != 2) ||
+        (decoded['version'] != 1 &&
+            decoded['version'] != 2 &&
+            decoded['version'] != 3) ||
         decoded['tables'] is! Map<String, dynamic> ||
         decoded['createdAt'] is! String) {
       throw const FormatException('Неверный формат резервной копии');
@@ -259,6 +292,11 @@ class WorkRepository {
     final tables = <String, List<Map<String, Object?>>>{};
     for (final entry in _backupColumns.entries) {
       final rawRows = source[entry.key];
+      if (entry.key == 'project_events' && decoded['version'] != 3 &&
+          rawRows == null) {
+        tables[entry.key] = [];
+        continue;
+      }
       if (rawRows is! List) {
         throw const FormatException('В копии отсутствует таблица данных');
       }
@@ -273,6 +311,9 @@ class WorkRepository {
         final row = Map<String, Object?>.from(rawRow);
         if (decoded['version'] == 1 && entry.key == 'shift_events') {
           row['details_json'] = null;
+        }
+        if (decoded['version'] != 3 && entry.key == 'projects') {
+          row['track_pay'] = 1;
         }
         if (entry.key == 'shift_events' && row['details_json'] is String) {
           final details = jsonDecode(row['details_json'] as String);
@@ -314,7 +355,10 @@ class WorkRepository {
     final rows = await _db.query('projects',
         where: 'archived = 0', orderBy: 'name COLLATE NOCASE');
     return rows
-        .map((row) => WorkProject(id: row['id'] as String, name: row['name'] as String))
+        .map((row) => WorkProject(
+            id: row['id'] as String,
+            name: row['name'] as String,
+            trackPay: row['track_pay'] == 1))
         .toList();
   }
 
@@ -357,10 +401,42 @@ class WorkRepository {
     }).toList();
   }
 
-  Future<void> addProject(String name) async {
+  Future<List<ProjectEvent>> projectEvents(String projectId) async {
+    final rows = await _db.query('project_events',
+        where: 'project_id = ?',
+        whereArgs: [projectId],
+        orderBy: 'recorded_ms DESC, rowid DESC');
+    return rows.map((row) => ProjectEvent(
+      recordedAt: DateTime.fromMillisecondsSinceEpoch(row['recorded_ms'] as int),
+      description: row['description'] as String,
+    )).toList();
+  }
+
+  Future<void> addProject(String name, {bool trackPay = false}) async {
     final clean = name.trim();
     if (clean.isEmpty) throw ArgumentError('Название проекта обязательно');
-    await _db.insert('projects', {'id': _newId(), 'name': clean});
+    final id = _newId();
+    await _db.transaction((tx) async {
+      await tx.insert('projects', {
+        'id': id, 'name': clean, 'track_pay': trackPay ? 1 : 0,
+      });
+      await _recordProjectEvent(tx, id,
+          'Проект создан. Учёт оплаты ${trackPay ? 'включён' : 'выключен'}');
+    });
+  }
+
+  Future<void> setProjectPayTracking(String projectId, bool enabled) async {
+    await _db.transaction((tx) async {
+      final rows = await tx.query('projects',
+          where: 'id = ? AND archived = 0',
+          whereArgs: [projectId], limit: 1);
+      if (rows.isEmpty) throw StateError('Проект не найден');
+      if ((rows.single['track_pay'] == 1) == enabled) return;
+      await tx.update('projects', {'track_pay': enabled ? 1 : 0},
+          where: 'id = ?', whereArgs: [projectId]);
+      await _recordProjectEvent(tx, projectId,
+          'Учёт оплаты ${enabled ? 'включён' : 'выключен'}');
+    });
   }
 
   Future<void> addRate({
@@ -373,12 +449,18 @@ class WorkRepository {
     if (clean.isEmpty || centsPerHour < 0) {
       throw ArgumentError('Проверьте название и сумму тарифа');
     }
-    await _db.insert('rates', {
-      'id': _newId(),
-      'project_id': projectId,
-      'name': clean,
-      'cents_per_hour': centsPerHour,
-      'currency': currency,
+    await _db.transaction((tx) async {
+      await tx.insert('rates', {
+        'id': _newId(),
+        'project_id': projectId,
+        'name': clean,
+        'cents_per_hour': centsPerHour,
+        'currency': currency,
+      });
+      await tx.update('projects', {'track_pay': 1},
+          where: 'id = ?', whereArgs: [projectId]);
+      await _recordProjectEvent(tx, projectId,
+          'Добавлен тариф «$clean»: $centsPerHour центов/ч ($currency)');
     });
   }
 
@@ -427,23 +509,26 @@ class WorkRepository {
     });
   }
 
-  Future<void> armShift(String shiftId, String rateId) async {
+  Future<void> armShift(String shiftId, String? rateId) async {
     await _db.transaction((tx) async {
       final shift = await _requireShift(tx, shiftId, ShiftStatus.planned);
-      final rows = await tx.query('rates',
-          where: 'id = ? AND project_id = ? AND archived = 0',
-          whereArgs: [rateId, shift['project_id']],
-          limit: 1);
-      if (rows.isEmpty) throw StateError('Тариф этого проекта не найден');
-      final rate = _rateFromRow(rows.single);
+      final project = await tx.query('projects',
+          where: 'id = ?', whereArgs: [shift['project_id']], limit: 1);
+      final tracksPay = project.single['track_pay'] == 1;
+      if (tracksPay && rateId == null) {
+        throw StateError('Выберите тариф для проекта с учётом оплаты');
+      }
+      if (!tracksPay && rateId != null) {
+        throw StateError('В этом проекте учёт оплаты выключен');
+      }
+      final rate = rateId == null
+          ? null
+          : await _requireRate(tx, rateId, shift['project_id'] as String);
       await tx.update(
           'shifts',
           {
             'status': ShiftStatus.armed.name,
-            'rate_id': rate.id,
-            'rate_name_snapshot': rate.name,
-            'rate_cents_snapshot': rate.centsPerHour,
-            'currency_snapshot': rate.currency,
+            ..._rateSnapshot(rate),
             'pre_check_in_ms': DateTime.now().millisecondsSinceEpoch,
           },
           where: 'id = ?',
@@ -524,7 +609,7 @@ class WorkRepository {
     required String shiftId,
     required DateTime plannedStart,
     required DateTime plannedEnd,
-    required String rateId,
+    required String? rateId,
     required String reason,
   }) async {
     _validatePlan(plannedStart, plannedEnd);
@@ -547,7 +632,9 @@ class WorkRepository {
               plannedEnd.day != originalEnd.day)) {
         throw StateError('После check-in нельзя изменить день окончания');
       }
-      final rate = await _requireRate(tx, rateId, before['project_id'] as String);
+      final rate = rateId == null
+          ? null
+          : await _requireRate(tx, rateId, before['project_id'] as String);
       await _updateWithAudit(tx, shiftId, before, {
         'planned_start_ms': plannedStart.millisecondsSinceEpoch,
         'planned_end_ms': plannedEnd.millisecondsSinceEpoch,
@@ -561,7 +648,7 @@ class WorkRepository {
     required DateTime creditedStart,
     required DateTime? creditedEnd,
     required int breakMinutes,
-    required String rateId,
+    required String? rateId,
     required String reason,
   }) async {
     if (creditedStart.isAfter(DateTime.now().add(const Duration(minutes: 1)))) {
@@ -588,7 +675,9 @@ class WorkRepository {
           throw ArgumentError('Проверьте время окончания и перерыв');
         }
       }
-      final rate = await _requireRate(tx, rateId, before['project_id'] as String);
+      final rate = rateId == null
+          ? null
+          : await _requireRate(tx, rateId, before['project_id'] as String);
       await _updateWithAudit(tx, shiftId, before, {
         'credited_start_ms': creditedStart.millisecondsSinceEpoch,
         'credited_end_ms': creditedEnd?.millisecondsSinceEpoch,
@@ -613,11 +702,11 @@ class WorkRepository {
     return _rateFromRow(rows.single);
   }
 
-  Map<String, Object?> _rateSnapshot(WorkRate rate) => {
-        'rate_id': rate.id,
-        'rate_name_snapshot': rate.name,
-        'rate_cents_snapshot': rate.centsPerHour,
-        'currency_snapshot': rate.currency,
+  Map<String, Object?> _rateSnapshot(WorkRate? rate) => {
+        'rate_id': rate?.id,
+        'rate_name_snapshot': rate?.name,
+        'rate_cents_snapshot': rate?.centsPerHour,
+        'currency_snapshot': rate?.currency,
       };
 
   Future<void> _updateWithAudit(Transaction tx, String shiftId,
@@ -670,6 +759,16 @@ class WorkRepository {
       'kind': kind,
       'recorded_ms': DateTime.now().millisecondsSinceEpoch,
       'credited_ms': credited?.millisecondsSinceEpoch,
+    });
+  }
+
+  Future<void> _recordProjectEvent(
+      Transaction tx, String projectId, String description) async {
+    await tx.insert('project_events', {
+      'id': _newId(),
+      'project_id': projectId,
+      'recorded_ms': DateTime.now().millisecondsSinceEpoch,
+      'description': description,
     });
   }
 }

@@ -19,14 +19,18 @@ String buildReportCsv(Iterable<WorkShift> shifts) {
       .toList()
     ..sort((a, b) => a.creditedStart!.compareTo(b.creditedStart!));
   final output = StringBuffer();
-  output.writeln('Проект;Тариф;Начало;Конец;Перерыв, мин;Оплачено, мин;'
+  output.writeln('Проект;Тариф;Начало;Конец;Перерыв, мин;Учтено, мин;'
       'Ставка за час;Валюта;Начислено');
   final totals = <String, (int, int)>{};
+  var totalMinutes = 0;
   for (final shift in completed) {
-    final currency = shift.currency ?? 'EUR';
-    final current = totals[currency] ?? (0, 0);
-    totals[currency] =
-        (current.$1 + shift.paidMinutes, current.$2 + shift.earnedCents);
+    totalMinutes += shift.paidMinutes;
+    final currency = shift.currency;
+    if (shift.rateCentsPerHour != null && currency != null) {
+      final current = totals[currency] ?? (0, 0);
+      totals[currency] =
+          (current.$1 + shift.paidMinutes, current.$2 + shift.earnedCents);
+    }
     final fields = [
       shift.projectName,
       shift.rateName,
@@ -34,12 +38,18 @@ String buildReportCsv(Iterable<WorkShift> shifts) {
       _timestamp(shift.creditedEnd!),
       shift.breakMinutes,
       shift.paidMinutes,
-      ((shift.rateCentsPerHour ?? 0) / 100).toStringAsFixed(2).replaceAll('.', ','),
+      shift.rateCentsPerHour == null
+          ? ''
+          : (shift.rateCentsPerHour! / 100).toStringAsFixed(2).replaceAll('.', ','),
       currency,
-      (shift.earnedCents / 100).toStringAsFixed(2).replaceAll('.', ','),
+      shift.rateCentsPerHour == null
+          ? ''
+          : (shift.earnedCents / 100).toStringAsFixed(2).replaceAll('.', ','),
     ];
     output.writeln(fields.map(_cell).join(';'));
   }
+  output.writeln(['Всего часов', '', '', '', '', totalMinutes, '', '', '']
+      .map(_cell).join(';'));
   for (final entry in totals.entries) {
     output.writeln([
       'Итого', '', '', '', '', entry.value.$1, '', entry.key,

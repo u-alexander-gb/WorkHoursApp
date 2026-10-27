@@ -232,7 +232,7 @@ void main() {
         reason: 'Уточнил план',
       );
       expect((await repository.shiftEvents(id)).first.kind, 'corrected');
-      expect(jsonDecode(await repository.exportBackup())['version'], 2);
+      expect(jsonDecode(await repository.exportBackup())['version'], 3);
     });
   });
 
@@ -242,6 +242,10 @@ void main() {
     final directory = await Directory.systemTemp.createTemp('work-hours-migration-');
     final path = '${directory.path}${Platform.pathSeparator}legacy.db';
     final old = await openDatabase(path, version: 1, onCreate: (db, version) async {
+      await db.execute('''CREATE TABLE projects (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL,
+        archived INTEGER NOT NULL DEFAULT 0
+      )''');
       await db.execute('''CREATE TABLE shift_events (
         id TEXT PRIMARY KEY, shift_id TEXT NOT NULL, kind TEXT NOT NULL,
         recorded_ms INTEGER NOT NULL, credited_ms INTEGER

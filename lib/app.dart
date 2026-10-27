@@ -337,25 +337,38 @@ class _WorkHomeState extends State<WorkHome> {
 
   Future<void> _createProject() async {
     final controller = TextEditingController();
-    final result = await showDialog<String>(
+    var trackPay = false;
+    final result = await showDialog<(String, bool)>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Новый проект'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(labelText: 'Название работы или проекта'),
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, update) => AlertDialog(
+          title: const Text('Новый проект'),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(
+              controller: controller,
+              autofocus: true,
+              decoration: const InputDecoration(labelText: 'Название работы или проекта'),
+            ),
+            SwitchListTile(
+              title: const Text('Учитывать оплату'),
+              subtitle: const Text('Выключено: учитываются только часы'),
+              value: trackPay,
+              onChanged: (value) => update(() => trackPay = value),
+            ),
+          ]),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Отмена')),
+            FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, (controller.text, trackPay)),
+                child: const Text('Сохранить')),
+          ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Отмена')),
-          FilledButton(
-              onPressed: () => Navigator.pop(context, controller.text),
-              child: const Text('Сохранить')),
-        ],
       ),
     );
     if (result != null) {
-      await _perform(() => widget.repository.addProject(result));
+      await _perform(() => widget.repository.addProject(result.$1,
+          trackPay: result.$2));
     }
     controller.dispose();
   }
@@ -483,25 +496,30 @@ class _WorkHomeState extends State<WorkHome> {
   }
 
   Future<void> _arm(WorkShift shift) async {
+    final project = projects.singleWhere((item) => item.id == shift.projectId);
     final available = rates[shift.projectId] ?? [];
-    if (available.isEmpty) {
+    if (project.trackPay && available.isEmpty) {
       _showError(context, 'Сначала добавьте тариф для проекта');
       return;
     }
-    final rateId = await showDialog<String>(
-      context: context,
-      builder: (context) => SimpleDialog(
-        title: const Text('Выберите тариф'),
-        children: available
-            .map((rate) => SimpleDialogOption(
-                  onPressed: () => Navigator.pop(context, rate.id),
-                  child: Text('${rate.name} — '
-                      '${_money(rate.centsPerHour, rate.currency)}/ч'),
-                ))
-            .toList(),
-      ),
-    );
-    if (rateId != null) {
+    String? rateId;
+    if (project.trackPay) {
+      rateId = await showDialog<String>(
+        context: context,
+        builder: (context) => SimpleDialog(
+          title: const Text('Выберите тариф'),
+          children: available
+              .map((rate) => SimpleDialogOption(
+                    onPressed: () => Navigator.pop(context, rate.id),
+                    child: Text('${rate.name} — '
+                        '${_money(rate.centsPerHour, rate.currency)}/ч'),
+                  ))
+              .toList(),
+        ),
+      );
+      if (rateId == null) return;
+    }
+    if (mounted) {
       await _perform(() async {
         await widget.repository.armShift(shift.id, rateId);
         await reminders.cancel(shift.id);
@@ -678,7 +696,9 @@ class _WorkHomeState extends State<WorkHome> {
                   },
                 ),
               ],
-              if (shift.status != ShiftStatus.planned)
+              if (shift.status != ShiftStatus.planned &&
+                  (shift.rateId != null ||
+                      projects.any((p) => p.id == shift.projectId && p.trackPay)))
                 DropdownButtonFormField<String>(
                   initialValue: availableRates.any((rate) => rate.id == rateId)
                       ? rateId
@@ -696,7 +716,7 @@ class _WorkHomeState extends State<WorkHome> {
               if (shift.status == ShiftStatus.active ||
                   shift.status == ShiftStatus.completed)
                 ListTile(
-                  title: const Text('Оплачиваемое начало'),
+                  title: const Text('Учтённое начало'),
                   subtitle: Text(_dateTime(creditedStart)),
                   onTap: () async {
                     final selected = await _pickDateTime(creditedStart);
@@ -707,7 +727,7 @@ class _WorkHomeState extends State<WorkHome> {
                 ),
               if (shift.status == ShiftStatus.completed) ...[
                 ListTile(
-                  title: const Text('Оплачиваемый конец'),
+                  title: const Text('Учтённый конец'),
                   subtitle: Text(_dateTime(creditedEnd)),
                   onTap: () async {
                     final selected = await _pickDateTime(creditedEnd);
@@ -753,7 +773,7 @@ class _WorkHomeState extends State<WorkHome> {
       if (mounted) _showError(context, 'Укажите причину исправления');
       return;
     }
-    if (shift.status != ShiftStatus.planned && rateId == null) {
+    if (shift.rateId != null && rateId == null) {
       if (mounted) _showError(context, 'Выберите тариф');
       return;
     }
@@ -779,7 +799,7 @@ class _WorkHomeState extends State<WorkHome> {
           shiftId: shift.id,
           plannedStart: plannedStart,
           plannedEnd: plannedEnd,
-          rateId: rateId!,
+          rateId: rateId,
           reason: reason,
         );
         await reminders.cancel(shift.id);
@@ -800,7 +820,7 @@ class _WorkHomeState extends State<WorkHome> {
           creditedStart: creditedStart,
           creditedEnd: shift.status == ShiftStatus.completed ? creditedEnd : null,
           breakMinutes: shift.status == ShiftStatus.completed ? breakMinutes! : 0,
-          rateId: rateId!,
+          rateId: rateId,
           reason: reason,
         );
       }
@@ -877,8 +897,8 @@ class _WorkHomeState extends State<WorkHome> {
       'rate_name_snapshot': 'Тариф',
       'rate_cents_snapshot': 'Ставка в центах',
       'currency_snapshot': 'Валюта',
-      'credited_start_ms': 'Оплачиваемое начало',
-      'credited_end_ms': 'Оплачиваемый конец',
+      'credited_start_ms': 'Учтённое начало',
+      'credited_end_ms': 'Учтённый конец',
       'break_minutes': 'Перерыв, мин',
     };
     final changes = <String>[];
@@ -920,6 +940,32 @@ class _WorkHomeState extends State<WorkHome> {
     }
   }
 
+  Future<void> _showProjectHistory(WorkProject project) async {
+    try {
+      final events = await widget.repository.projectEvents(project.id);
+      if (!mounted) return;
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        builder: (context) => SafeArea(
+          child: SizedBox(
+            height: MediaQuery.sizeOf(context).height * 0.6,
+            child: ListView(children: [
+              ListTile(title: Text('История проекта: ${project.name}')),
+              for (final event in events)
+                ListTile(
+                  title: Text(_dateTime(event.recordedAt)),
+                  subtitle: Text(event.description),
+                ),
+            ]),
+          ),
+        ),
+      );
+    } catch (error) {
+      if (mounted) _showError(context, error);
+    }
+  }
+
   Widget _shiftCard(WorkShift shift, {bool inPlan = false}) {
     final status = switch (shift.status) {
       ShiftStatus.planned => 'План',
@@ -945,9 +991,13 @@ class _WorkHomeState extends State<WorkHome> {
               shift.plannedEnd!.isBefore(DateTime.now()))
             const Text('Плановый конец прошёл. Сделайте check-out.'),
           if (shift.rateName != null) Text('Тариф: ${shift.rateName}'),
-          if (shift.status == ShiftStatus.completed)
+          if (shift.status == ShiftStatus.completed &&
+              shift.rateCentsPerHour != null)
             Text('${_duration(shift.paidMinutes)} · '
                 '${_money(shift.earnedCents, shift.currency ?? 'EUR')}'),
+          if (shift.status == ShiftStatus.completed &&
+              shift.rateCentsPerHour == null)
+            Text(_duration(shift.paidMinutes)),
           const SizedBox(height: 8),
           if (!inPlan) switch (shift.status) {
             ShiftStatus.planned => FilledButton.tonal(
@@ -1075,7 +1125,7 @@ class _WorkHomeState extends State<WorkHome> {
   }
 
   Widget _projectsPage() => ListView(padding: const EdgeInsets.all(16), children: [
-        Text('Проекты и тарифы',
+        Text('Проекты',
             style: Theme.of(context).textTheme.headlineSmall),
         FilledButton.icon(
             onPressed: _createProject,
@@ -1091,15 +1141,31 @@ class _WorkHomeState extends State<WorkHome> {
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(project.name,
                     style: Theme.of(context).textTheme.titleMedium),
-                for (final rate in rates[project.id] ?? <WorkRate>[])
-                  ListTile(
-                    title: Text(rate.name),
-                    trailing: Text('${_money(rate.centsPerHour, rate.currency)}/ч'),
-                  ),
+                SwitchListTile(
+                  title: const Text('Учитывать оплату'),
+                  subtitle: Text(project.trackPay
+                      ? 'Часы и начисления по тарифу'
+                      : 'Только часы, без денежных сумм'),
+                  value: project.trackPay,
+                  onChanged: (enabled) => _perform(() =>
+                      widget.repository.setProjectPayTracking(project.id, enabled)),
+                ),
+                if (project.trackPay) ...[
+                  for (final rate in rates[project.id] ?? <WorkRate>[])
+                    ListTile(
+                      title: Text(rate.name),
+                      trailing: Text('${_money(rate.centsPerHour, rate.currency)}/ч'),
+                    ),
+                  TextButton.icon(
+                      onPressed: () => _createRate(project),
+                      icon: const Icon(Icons.add),
+                      label: const Text('Добавить тариф')),
+                ],
                 TextButton.icon(
-                    onPressed: () => _createRate(project),
-                    icon: const Icon(Icons.add),
-                    label: const Text('Добавить тариф')),
+                  onPressed: () => _showProjectHistory(project),
+                  icon: const Icon(Icons.history),
+                  label: const Text('История проекта'),
+                ),
               ]),
             ),
           ),
@@ -1171,6 +1237,7 @@ class _WorkHomeState extends State<WorkHome> {
     final minutes = completed.fold<int>(0, (sum, s) => sum + s.paidMinutes);
     final totals = <String, int>{};
     for (final shift in completed) {
+      if (shift.rateCentsPerHour == null) continue;
       final currency = shift.currency ?? 'EUR';
       totals[currency] = (totals[currency] ?? 0) + shift.earnedCents;
     }
@@ -1217,7 +1284,7 @@ class _WorkHomeState extends State<WorkHome> {
       Card(child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('Оплачиваемое время: ${_duration(minutes)}'),
+          Text('Учтённое время: ${_duration(minutes)}'),
           for (final total in totals.entries)
             Text('Сумма: ${_money(total.value, total.key)}'),
           if (completed.isEmpty) const Text('Завершённых смен нет.'),
