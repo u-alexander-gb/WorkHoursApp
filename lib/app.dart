@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
@@ -79,6 +80,7 @@ class _WorkHomeState extends State<WorkHome> {
   Map<String, List<WorkRate>> rates = {};
   String period = 'week';
   DateTime anchor = DateTime.now();
+  DateTime planWeek = DateTime.now();
   DateTimeRange? customRange;
 
   @override
@@ -260,21 +262,17 @@ class _WorkHomeState extends State<WorkHome> {
         ),
       );
       if (confirmed != true) return;
-      final previousArmed = shifts.where((s) => s.status == ShiftStatus.armed).toList();
+      final previousArmed = shifts.where((s) =>
+          s.status == ShiftStatus.planned ||
+          s.status == ShiftStatus.armed ||
+          s.status == ShiftStatus.active).toList();
       await widget.repository.restoreBackup(contents);
       for (final shift in previousArmed) {
         await reminders.cancel(shift.id);
       }
       final restored = await widget.repository.shifts();
       for (final shift in restored) {
-        if (shift.status == ShiftStatus.armed &&
-            shift.plannedStart.isAfter(DateTime.now())) {
-          await reminders.schedule(
-            shiftId: shift.id,
-            start: shift.plannedStart,
-            projectName: shift.projectName,
-          );
-        }
+        await _scheduleReminder(shift);
       }
       await _reload();
       if (mounted) {
@@ -285,6 +283,30 @@ class _WorkHomeState extends State<WorkHome> {
     } catch (error) {
       if (mounted) _showError(context, error);
     }
+  }
+
+  Future<ReminderResult> _scheduleReminder(WorkShift shift) async {
+    final kind = switch (shift.status) {
+      ShiftStatus.planned => ReminderKind.checkIn,
+      ShiftStatus.armed => ReminderKind.confirmStart,
+      ShiftStatus.active => ReminderKind.checkOut,
+      _ => null,
+    };
+    if (kind == null) {
+      return const ReminderResult(scheduled: false, exact: false);
+    }
+    final due = kind == ReminderKind.checkOut
+        ? (shift.plannedEnd ?? shift.plannedStart.add(const Duration(hours: 8)))
+        : shift.plannedStart;
+    final when = kind == ReminderKind.checkOut && !due.isAfter(DateTime.now())
+        ? DateTime.now().add(const Duration(minutes: 1))
+        : due;
+    return reminders.schedule(
+      shiftId: shift.id,
+      when: when,
+      projectName: shift.projectName,
+      kind: kind,
+    );
   }
 
   Future<DateTime?> _pickDateTime(DateTime initial) async {
@@ -301,6 +323,16 @@ class _WorkHomeState extends State<WorkHome> {
     );
     if (time == null) return null;
     return DateTime(date.year, date.month, date.day, time.hour, time.minute);
+  }
+
+  Future<DateTime?> _pickTimeOnDay(DateTime initial) async {
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(initial),
+    );
+    if (time == null) return null;
+    return DateTime(initial.year, initial.month, initial.day,
+        time.hour, time.minute);
   }
 
   Future<void> _createProject() async {
@@ -372,7 +404,11 @@ class _WorkHomeState extends State<WorkHome> {
     }
     final now = DateTime.now();
     var projectId = projects.first.id;
-    var start = DateTime(now.year, now.month, now.day + 1, 10);
+    final monday = DateTime(planWeek.year, planWeek.month,
+        planWeek.day - planWeek.weekday + DateTime.monday);
+    var start = monday.isAfter(now)
+        ? DateTime(monday.year, monday.month, monday.day, 10)
+        : DateTime(now.year, now.month, now.day + 1, 10);
     var end = start.add(const Duration(hours: 8));
     final result = await showDialog<(String, DateTime, DateTime)>(
       context: context,
@@ -428,8 +464,21 @@ class _WorkHomeState extends State<WorkHome> {
       ),
     );
     if (result != null) {
-      await _perform(() => widget.repository.planShift(
-          projectId: result.$1, start: result.$2, end: result.$3));
+      await _perform(() async {
+        final id = await widget.repository.planShift(
+            projectId: result.$1, start: result.$2, end: result.$3);
+        final reminder = await reminders.schedule(
+          shiftId: id,
+          when: result.$2,
+          projectName: projects.singleWhere((p) => p.id == result.$1).name,
+          kind: ReminderKind.checkIn,
+        );
+        if (Platform.isAndroid && mounted && !reminder.scheduled &&
+            result.$2.isAfter(DateTime.now())) {
+          _showError(context, 'План сохранён, но напоминание о check-in не назначено');
+        }
+      });
+      if (mounted) setState(() => planWeek = result.$2);
     }
   }
 
@@ -455,14 +504,17 @@ class _WorkHomeState extends State<WorkHome> {
     if (rateId != null) {
       await _perform(() async {
         await widget.repository.armShift(shift.id, rateId);
+        await reminders.cancel(shift.id);
         final reminder = await reminders.schedule(
           shiftId: shift.id,
-          start: shift.plannedStart,
+          when: shift.plannedStart,
           projectName: shift.projectName,
+          kind: ReminderKind.confirmStart,
         );
-        if (mounted && !reminder.scheduled) {
+        if (Platform.isAndroid && mounted && !reminder.scheduled &&
+            shift.plannedStart.isAfter(DateTime.now())) {
           _showError(context, 'Напоминание не назначено. Проверьте разрешения.');
-        } else if (mounted && !reminder.exact) {
+        } else if (Platform.isAndroid && mounted && reminder.scheduled && !reminder.exact) {
           _showError(context, 'Напоминание может прийти с задержкой.');
         }
       });
@@ -501,6 +553,12 @@ class _WorkHomeState extends State<WorkHome> {
       await _perform(() async {
         await widget.repository.confirmStart(shift.id, start);
         await reminders.cancel(shift.id);
+        final active = (await widget.repository.shifts())
+            .singleWhere((item) => item.id == shift.id);
+        final reminder = await _scheduleReminder(active);
+        if (Platform.isAndroid && mounted && !reminder.scheduled) {
+          _showError(context, 'Начало сохранено, но напоминание о check-out не назначено');
+        }
       });
     }
   }
@@ -550,8 +608,11 @@ class _WorkHomeState extends State<WorkHome> {
     );
     breakInput.dispose();
     if (result != null) {
-      await _perform(() => widget.repository.checkOut(
-          shift.id, result.$1, breakMinutes: result.$2));
+      await _perform(() async {
+        await widget.repository.checkOut(
+            shift.id, result.$1, breakMinutes: result.$2);
+        await reminders.cancel(shift.id);
+      });
     }
   }
 
@@ -592,7 +653,9 @@ class _WorkHomeState extends State<WorkHome> {
                   title: const Text('Плановое начало'),
                   subtitle: Text(_dateTime(plannedStart)),
                   onTap: () async {
-                    final selected = await _pickDateTime(plannedStart);
+                    final selected = shift.status == ShiftStatus.armed
+                        ? await _pickTimeOnDay(plannedStart)
+                        : await _pickDateTime(plannedStart);
                     if (selected != null) {
                       update(() {
                         final duration = plannedEnd.difference(plannedStart);
@@ -606,7 +669,9 @@ class _WorkHomeState extends State<WorkHome> {
                   title: const Text('Плановый конец'),
                   subtitle: Text(_dateTime(plannedEnd)),
                   onTap: () async {
-                    final selected = await _pickDateTime(plannedEnd);
+                    final selected = shift.status == ShiftStatus.armed
+                        ? await _pickTimeOnDay(plannedEnd)
+                        : await _pickDateTime(plannedEnd);
                     if (selected != null) {
                       update(() => plannedEnd = selected);
                     }
@@ -705,6 +770,10 @@ class _WorkHomeState extends State<WorkHome> {
           plannedEnd: plannedEnd,
           reason: reason,
         );
+        await reminders.cancel(shift.id);
+        final updated = (await widget.repository.shifts())
+            .singleWhere((item) => item.id == shift.id);
+        await _scheduleReminder(updated);
       } else if (shift.status == ShiftStatus.armed) {
         await widget.repository.updateArmedShift(
           shiftId: shift.id,
@@ -717,10 +786,11 @@ class _WorkHomeState extends State<WorkHome> {
         if (plannedStart.isAfter(DateTime.now())) {
           final result = await reminders.schedule(
             shiftId: shift.id,
-            start: plannedStart,
+            when: plannedStart,
             projectName: shift.projectName,
+            kind: ReminderKind.confirmStart,
           );
-          if (!result.scheduled && mounted) {
+          if (Platform.isAndroid && !result.scheduled && mounted) {
             _showError(context, 'Время изменено, но напоминание не назначено');
           }
         }
@@ -734,6 +804,43 @@ class _WorkHomeState extends State<WorkHome> {
           reason: reason,
         );
       }
+    });
+  }
+
+  Future<void> _cancelPlannedShift(WorkShift shift) async {
+    final reasonInput = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Отменить плановую смену?'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text('${shift.projectName} · ${_dateTime(shift.plannedStart)}'),
+          TextField(
+            controller: reasonInput,
+            autofocus: true,
+            decoration: const InputDecoration(labelText: 'Причина отмены'),
+          ),
+        ]),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Назад')),
+          FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Отменить смену')),
+        ],
+      ),
+    );
+    final reason = reasonInput.text.trim();
+    reasonInput.dispose();
+    if (confirmed != true) return;
+    if (reason.isEmpty) {
+      if (mounted) _showError(context, 'Укажите причину отмены');
+      return;
+    }
+    await _perform(() async {
+      await widget.repository.cancelPlannedShift(shift.id, reason);
+      await reminders.cancel(shift.id);
     });
   }
 
@@ -751,6 +858,9 @@ class _WorkHomeState extends State<WorkHome> {
   }
 
   String _eventDetails(ShiftEvent event) {
+    if (event.kind == 'cancelled') {
+      return 'Плановая смена отменена. Причина: ${event.reason ?? 'не указана'}';
+    }
     if (event.before == null || event.after == null) {
       return switch (event.kind) {
         'planned' => 'Смена запланирована',
@@ -810,7 +920,7 @@ class _WorkHomeState extends State<WorkHome> {
     }
   }
 
-  Widget _shiftCard(WorkShift shift) {
+  Widget _shiftCard(WorkShift shift, {bool inPlan = false}) {
     final status = switch (shift.status) {
       ShiftStatus.planned => 'План',
       ShiftStatus.armed => 'Ожидает подтверждения',
@@ -827,12 +937,19 @@ class _WorkHomeState extends State<WorkHome> {
           if (shift.status == ShiftStatus.armed &&
               shift.plannedStart.isBefore(DateTime.now()))
             const Text('Плановое начало прошло. Подтвердите прибытие.'),
+          if (shift.status == ShiftStatus.planned &&
+              shift.plannedStart.isBefore(DateTime.now()))
+            const Text('Плановое начало прошло. Сделайте check-in.'),
+          if (shift.status == ShiftStatus.active &&
+              shift.plannedEnd != null &&
+              shift.plannedEnd!.isBefore(DateTime.now()))
+            const Text('Плановый конец прошёл. Сделайте check-out.'),
           if (shift.rateName != null) Text('Тариф: ${shift.rateName}'),
           if (shift.status == ShiftStatus.completed)
             Text('${_duration(shift.paidMinutes)} · '
                 '${_money(shift.earnedCents, shift.currency ?? 'EUR')}'),
           const SizedBox(height: 8),
-          switch (shift.status) {
+          if (!inPlan) switch (shift.status) {
             ShiftStatus.planned => FilledButton.tonal(
                 onPressed: () => _arm(shift),
                 child: const Text('Предварительный check-in')),
@@ -845,11 +962,24 @@ class _WorkHomeState extends State<WorkHome> {
             _ => const SizedBox.shrink(),
           },
           Wrap(spacing: 8, children: [
-            TextButton.icon(
-              onPressed: () => _editShift(shift),
-              icon: const Icon(Icons.edit_outlined),
-              label: const Text('Исправить'),
-            ),
+            if (!inPlan && shift.status != ShiftStatus.cancelled)
+              TextButton.icon(
+                onPressed: () => _editShift(shift),
+                icon: const Icon(Icons.edit_outlined),
+                label: const Text('Исправить'),
+              ),
+            if (inPlan && shift.status == ShiftStatus.planned) ...[
+              TextButton.icon(
+                onPressed: () => _editShift(shift),
+                icon: const Icon(Icons.edit_calendar_outlined),
+                label: const Text('Изменить план'),
+              ),
+              TextButton.icon(
+                onPressed: () => _cancelPlannedShift(shift),
+                icon: const Icon(Icons.event_busy_outlined),
+                label: const Text('Отменить'),
+              ),
+            ],
             TextButton.icon(
               onPressed: () => _showHistory(shift),
               icon: const Icon(Icons.history),
@@ -865,10 +995,11 @@ class _WorkHomeState extends State<WorkHome> {
     final now = DateTime.now();
     final today = shifts.where((shift) {
       final start = shift.plannedStart;
-      return (start.year == now.year &&
+      return shift.status != ShiftStatus.cancelled &&
+          ((start.year == now.year &&
               start.month == now.month &&
               start.day == now.day) ||
-          shift.status == ShiftStatus.active;
+          shift.status == ShiftStatus.active);
     });
     return ListView(padding: const EdgeInsets.all(16), children: [
       Text('Сегодня, ${_date(now)}',
@@ -883,17 +1014,62 @@ class _WorkHomeState extends State<WorkHome> {
     ]);
   }
 
-  Widget _planPage() => ListView(padding: const EdgeInsets.all(16), children: [
-        Text('Смены', style: Theme.of(context).textTheme.headlineSmall),
-        FilledButton.icon(
-            onPressed: _plan,
-            icon: const Icon(Icons.add),
-            label: const Text('Добавить смену')),
-        if (shifts.isEmpty) const Padding(
-            padding: EdgeInsets.all(16),
-            child: Text('Пока нет запланированных смен.')),
-        for (final shift in shifts) _shiftCard(shift),
-      ]);
+  Widget _planPage() {
+    final monday = DateTime(planWeek.year, planWeek.month,
+        planWeek.day - planWeek.weekday + DateTime.monday);
+    final sunday = monday.add(const Duration(days: 6));
+    return ListView(padding: const EdgeInsets.all(16), children: [
+      Text('План на неделю', style: Theme.of(context).textTheme.headlineSmall),
+      Row(children: [
+        IconButton(
+          onPressed: () => setState(() => planWeek = monday.subtract(const Duration(days: 7))),
+          icon: const Icon(Icons.chevron_left),
+        ),
+        Expanded(child: Text('${_date(monday)} — ${_date(sunday)}',
+            textAlign: TextAlign.center)),
+        IconButton(
+          onPressed: () => setState(() => planWeek = monday.add(const Duration(days: 7))),
+          icon: const Icon(Icons.chevron_right),
+        ),
+      ]),
+      FilledButton.icon(
+        onPressed: _plan,
+        icon: const Icon(Icons.add),
+        label: const Text('Добавить смену'),
+      ),
+      const Text('После check-in перенести или отменить день через план нельзя.'),
+      for (var offset = 0; offset < 7; offset++) ...[
+        Padding(
+          padding: const EdgeInsets.only(top: 16, bottom: 4),
+          child: Text(_date(monday.add(Duration(days: offset))),
+              style: Theme.of(context).textTheme.titleMedium),
+        ),
+        for (final shift in shifts.where((item) {
+          final day = monday.add(Duration(days: offset));
+          return item.plannedStart.year == day.year &&
+              item.plannedStart.month == day.month &&
+              item.plannedStart.day == day.day;
+        }))
+          _shiftCard(shift, inPlan: true),
+      ],
+    ]);
+  }
+
+  void _showAbout() {
+    showAboutDialog(
+      context: context,
+      applicationName: 'WorkHoursApp',
+      applicationLegalese: '© 2026 Alexander. Лицензия MIT.',
+      children: const [
+        SizedBox(height: 12),
+        Text('Создатель: Alexander (u-alexander-gb).'),
+        SizedBox(height: 8),
+        Text('Приложение для личного учёта рабочих смен, часов и тарифов.'),
+        SizedBox(height: 8),
+        SelectableText('github.com/u-alexander-gb/WorkHoursApp'),
+      ],
+    );
+  }
 
   Widget _projectsPage() => ListView(padding: const EdgeInsets.all(16), children: [
         Text('Проекты и тарифы',
@@ -1061,17 +1237,20 @@ class _WorkHomeState extends State<WorkHome> {
         title: Text(titles[tab]),
         actions: [
           PopupMenuButton<String>(
-            tooltip: 'Резервная копия',
+            tooltip: 'Меню',
             onSelected: (value) {
               if (value == 'export') {
                 _exportBackup();
-              } else {
+              } else if (value == 'import') {
                 _importBackup();
+              } else if (value == 'about') {
+                _showAbout();
               }
             },
             itemBuilder: (_) => const [
               PopupMenuItem(value: 'export', child: Text('Сохранить копию')),
               PopupMenuItem(value: 'import', child: Text('Восстановить копию')),
+              PopupMenuItem(value: 'about', child: Text('О приложении')),
             ],
           ),
         ],

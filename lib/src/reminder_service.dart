@@ -11,6 +11,8 @@ class ReminderResult {
   final bool exact;
 }
 
+enum ReminderKind { checkIn, confirmStart, checkOut }
+
 class ReminderService {
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
@@ -34,10 +36,11 @@ class ReminderService {
 
   Future<ReminderResult> schedule({
     required String shiftId,
-    required DateTime start,
+    required DateTime when,
     required String projectName,
+    required ReminderKind kind,
   }) async {
-    if (!Platform.isAndroid || !start.isAfter(DateTime.now())) {
+    if (!Platform.isAndroid || !when.isAfter(DateTime.now())) {
       return const ReminderResult(scheduled: false, exact: false);
     }
     await initialize();
@@ -52,16 +55,28 @@ class ReminderService {
       await android?.requestExactAlarmsPermission();
       exact = await android?.canScheduleExactNotifications() ?? false;
     }
+    final title = switch (kind) {
+      ReminderKind.checkIn => 'Пора сделать check-in',
+      ReminderKind.confirmStart => 'Пора подтвердить начало работы',
+      ReminderKind.checkOut => 'Пора сделать check-out',
+    };
+    final body = switch (kind) {
+      ReminderKind.checkIn => '$projectName: выберите тариф и отметьте начало.',
+      ReminderKind.confirmStart => '$projectName: вы на месте?',
+      ReminderKind.checkOut => '$projectName: смена ещё не завершена.',
+    };
     await _plugin.zonedSchedule(
-      id: _notificationId(shiftId),
-      title: 'Пора подтвердить начало работы',
-      body: '$projectName: вы на месте?',
-      scheduledDate: tz.TZDateTime.from(start, tz.local),
-      notificationDetails: const NotificationDetails(
+      id: _notificationId(shiftId, kind),
+      title: title,
+      body: body,
+      scheduledDate: tz.TZDateTime.from(when, tz.local),
+      notificationDetails: NotificationDetails(
         android: AndroidNotificationDetails(
-          'shift_start',
-          'Начало смены',
-          channelDescription: 'Напоминания о подтверждении начала работы',
+          kind == ReminderKind.checkOut ? 'shift_end' : 'shift_start',
+          kind == ReminderKind.checkOut ? 'Конец смены' : 'Начало смены',
+          channelDescription: kind == ReminderKind.checkOut
+              ? 'Напоминания о завершении работы'
+              : 'Напоминания о начале работы',
           importance: Importance.high,
           priority: Priority.high,
         ),
@@ -77,9 +92,11 @@ class ReminderService {
   Future<void> cancel(String shiftId) async {
     if (!Platform.isAndroid) return;
     await initialize();
-    await _plugin.cancel(id: _notificationId(shiftId));
+    await _plugin.cancel(id: _notificationId(shiftId, ReminderKind.checkIn));
+    await _plugin.cancel(id: _notificationId(shiftId, ReminderKind.checkOut));
   }
 
-  int _notificationId(String shiftId) =>
-      int.parse(shiftId.substring(0, 8), radix: 16) & 0x7fffffff;
+  int _notificationId(String shiftId, ReminderKind kind) =>
+      ((int.parse(shiftId.substring(0, 8), radix: 16) & 0x3fffffff) * 2) +
+      (kind == ReminderKind.checkOut ? 1 : 0);
 }

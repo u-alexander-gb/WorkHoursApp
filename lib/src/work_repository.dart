@@ -330,7 +330,6 @@ class WorkRepository {
     final rows = await _db.rawQuery('''
       SELECT s.*, p.name AS project_name
       FROM shifts s JOIN projects p ON p.id = s.project_id
-      WHERE s.status != 'cancelled'
       ORDER BY s.planned_start_ms DESC
     ''');
     return rows.map(_shiftFromRow).toList();
@@ -383,7 +382,7 @@ class WorkRepository {
     });
   }
 
-  Future<void> planShift({
+  Future<String> planShift({
     required String projectId,
     required DateTime start,
     DateTime? end,
@@ -401,6 +400,30 @@ class WorkRepository {
         'planned_end_ms': end?.millisecondsSinceEpoch,
       });
       await _recordEvent(tx, id, 'planned');
+    });
+    return id;
+  }
+
+  Future<void> cancelPlannedShift(String shiftId, String reason) async {
+    final cleanReason = reason.trim();
+    if (cleanReason.isEmpty) {
+      throw ArgumentError('Укажите причину отмены');
+    }
+    await _db.transaction((tx) async {
+      final before = await _requireShift(tx, shiftId, ShiftStatus.planned);
+      await tx.update('shifts', {'status': ShiftStatus.cancelled.name},
+          where: 'id = ?', whereArgs: [shiftId]);
+      await tx.insert('shift_events', {
+        'id': _newId(),
+        'shift_id': shiftId,
+        'kind': 'cancelled',
+        'recorded_ms': DateTime.now().millisecondsSinceEpoch,
+        'details_json': jsonEncode({
+          'reason': cleanReason,
+          'before': _auditValues(before),
+          'after': _auditValues(before),
+        }),
+      });
     });
   }
 
@@ -507,6 +530,23 @@ class WorkRepository {
     _validatePlan(plannedStart, plannedEnd);
     await _db.transaction((tx) async {
       final before = await _requireShift(tx, shiftId, ShiftStatus.armed);
+      final originalDay = DateTime.fromMillisecondsSinceEpoch(
+          before['planned_start_ms'] as int);
+      if (plannedStart.year != originalDay.year ||
+          plannedStart.month != originalDay.month ||
+          plannedStart.day != originalDay.day) {
+        throw StateError('После check-in нельзя перенести смену на другой день');
+      }
+      final originalEndMs = before['planned_end_ms'] as int?;
+      final originalEnd = originalEndMs == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(originalEndMs);
+      if (originalEnd != null &&
+          (plannedEnd.year != originalEnd.year ||
+              plannedEnd.month != originalEnd.month ||
+              plannedEnd.day != originalEnd.day)) {
+        throw StateError('После check-in нельзя изменить день окончания');
+      }
       final rate = await _requireRate(tx, rateId, before['project_id'] as String);
       await _updateWithAudit(tx, shiftId, before, {
         'planned_start_ms': plannedStart.millisecondsSinceEpoch,
