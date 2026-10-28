@@ -537,13 +537,15 @@ class WorkRepository {
     });
   }
 
-  Future<void> confirmStart(String shiftId, DateTime creditedStart) async {
+  Future<void> confirmStart(String shiftId, DateTime creditedStart,
+      {String reason = ''}) async {
     final now = DateTime.now();
     if (creditedStart.isAfter(now.add(const Duration(minutes: 1)))) {
       throw ArgumentError('Начало работы не может быть в будущем');
     }
     await _db.transaction((tx) async {
       await _requireShift(tx, shiftId, ShiftStatus.armed);
+      await _assertNoWorkOverlap(tx, shiftId, creditedStart, DateTime.now());
       await tx.update(
           'shifts',
           {
@@ -553,12 +555,12 @@ class WorkRepository {
           },
           where: 'id = ?',
           whereArgs: [shiftId]);
-      await _recordEvent(tx, shiftId, 'confirmed', creditedStart);
+      await _recordEvent(tx, shiftId, 'confirmed', creditedStart, reason);
     });
   }
 
   Future<void> checkOut(String shiftId, DateTime creditedEnd,
-      {required int breakMinutes}) async {
+      {required int breakMinutes, String reason = ''}) async {
     if (breakMinutes < 0) {
       throw ArgumentError('Перерыв не может быть отрицательным');
     }
@@ -570,6 +572,7 @@ class WorkRepository {
       if (minutes <= 0 || breakMinutes > minutes) {
         throw ArgumentError('Проверьте время окончания и перерыв');
       }
+      await _assertNoWorkOverlap(tx, shiftId, start, creditedEnd);
       await tx.update(
           'shifts',
           {
@@ -580,7 +583,7 @@ class WorkRepository {
           },
           where: 'id = ?',
           whereArgs: [shiftId]);
-      await _recordEvent(tx, shiftId, 'completed', creditedEnd);
+      await _recordEvent(tx, shiftId, 'completed', creditedEnd, reason);
     });
   }
 
@@ -675,6 +678,9 @@ class WorkRepository {
           throw ArgumentError('Проверьте время окончания и перерыв');
         }
       }
+      await _assertNoWorkOverlap(
+          tx, shiftId, creditedStart,
+          creditedEnd ?? DateTime.now());
       final rate = rateId == null
           ? null
           : await _requireRate(tx, rateId, before['project_id'] as String);
@@ -752,14 +758,46 @@ class WorkRepository {
   }
 
   Future<void> _recordEvent(Transaction tx, String shiftId, String kind,
-      [DateTime? credited]) async {
+      [DateTime? credited, String reason = '']) async {
     await tx.insert('shift_events', {
       'id': _newId(),
       'shift_id': shiftId,
       'kind': kind,
       'recorded_ms': DateTime.now().millisecondsSinceEpoch,
       'credited_ms': credited?.millisecondsSinceEpoch,
+      if (reason.trim().isNotEmpty)
+        'details_json': jsonEncode({
+          'reason': reason.trim(),
+          'before': <String, Object?>{},
+          'after': <String, Object?>{},
+        }),
     });
+  }
+
+  Future<void> _assertNoWorkOverlap(Transaction tx, String shiftId,
+      DateTime start, DateTime end) async {
+    final rows = await tx.rawQuery('''
+      SELECT s.credited_start_ms, s.credited_end_ms, p.name AS project_name
+      FROM shifts s JOIN projects p ON p.id = s.project_id
+      WHERE s.id != ? AND s.status IN (?, ?)
+    ''', [shiftId, ShiftStatus.active.name, ShiftStatus.completed.name]);
+    final startMs = start.millisecondsSinceEpoch;
+    final endMs = end.millisecondsSinceEpoch;
+    for (final row in rows) {
+      final otherStart = row['credited_start_ms'] as int?;
+      if (otherStart == null) continue;
+      final otherEnd = row['credited_end_ms'] as int? ??
+          DateTime.now().millisecondsSinceEpoch;
+      if (startMs < otherEnd && otherStart < endMs) {
+        final from = DateTime.fromMillisecondsSinceEpoch(otherStart);
+        final to = DateTime.fromMillisecondsSinceEpoch(otherEnd);
+        throw StateError('Рабочее время пересекается со сменой '
+            '«${row['project_name']}» (${from.day}.${from.month} '
+            '${from.hour}:${from.minute.toString().padLeft(2, '0')} — '
+            '${to.day}.${to.month} ${to.hour}:${to.minute.toString().padLeft(2, '0')}). '
+            'Измените время начала или окончания.');
+      }
+    }
   }
 
   Future<void> _recordProjectEvent(

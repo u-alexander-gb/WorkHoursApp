@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'src/backup_codec.dart';
 import 'src/plan_calendar.dart';
+import 'src/time_deviation.dart';
 import 'src/work_repository.dart';
 import 'src/reminder_service.dart';
 import 'src/report_csv.dart';
@@ -639,8 +640,12 @@ class _WorkHomeState extends State<WorkHome> {
       ),
     );
     if (start != null) {
+      final approval = await _approveDeviation(
+          startDeviation(shift.plannedStart, start));
+      if (approval == null || !mounted) return;
       await _perform(() async {
-        await widget.repository.confirmStart(shift.id, start);
+        await widget.repository.confirmStart(shift.id, start,
+            reason: approval);
         await reminders.cancel(shift.id);
         final active = (await widget.repository.shifts())
             .singleWhere((item) => item.id == shift.id);
@@ -697,12 +702,49 @@ class _WorkHomeState extends State<WorkHome> {
     );
     breakInput.dispose();
     if (result != null) {
+      final approval = await _approveDeviation(
+          endDeviation(shift.plannedEnd, result.$1));
+      if (approval == null || !mounted) return;
       await _perform(() async {
         await widget.repository.checkOut(
-            shift.id, result.$1, breakMinutes: result.$2);
+            shift.id, result.$1, breakMinutes: result.$2,
+            reason: approval);
         await reminders.cancel(shift.id);
       });
     }
+  }
+
+  Future<String?> _approveDeviation(TimeDeviation? deviation) async {
+    if (deviation == null) return '';
+    final significant = deviation.severity == DeviationSeverity.significant;
+    final reasonInput = TextEditingController();
+    final approved = await showFormDialogUntilClosed<bool>(
+      context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(significant ? 'Проверьте время' : 'Отклонение от плана'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          DeviationNotice(deviation: deviation),
+          if (significant) ...[
+            const Text('Проверьте время. При необходимости укажите причину.'),
+            TextField(
+              controller: reasonInput,
+              decoration: const InputDecoration(labelText: 'Причина (необязательно)'),
+            ),
+          ],
+        ]),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Назад')),
+          FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Сохранить фактическое время')),
+        ],
+      ),
+    );
+    final reason = reasonInput.text.trim();
+    reasonInput.dispose();
+    return approved == true ? reason : null;
   }
 
   Future<void> _editShift(WorkShift shift) async {
@@ -952,6 +994,12 @@ class _WorkHomeState extends State<WorkHome> {
     if (event.kind == 'cancelled') {
       return 'Плановая смена отменена. Причина: ${event.reason ?? 'не указана'}';
     }
+    if (event.kind == 'confirmed' || event.kind == 'completed') {
+      final label = event.kind == 'confirmed'
+          ? 'Начало подтверждено'
+          : 'Смена завершена';
+      return event.reason == null ? label : '$label. Причина: ${event.reason}';
+    }
     if (event.before == null || event.after == null) {
       return switch (event.kind) {
         'planned' => 'Смена запланирована',
@@ -1090,6 +1138,18 @@ class _WorkHomeState extends State<WorkHome> {
             Expanded(child: Text('${_dateTime(shift.plannedStart)} · $status')),
           ])),
           ?countdown,
+          if (shift.creditedStart != null) ...[
+            Text('Учтённое начало: ${_dateTime(shift.creditedStart!)}'),
+            if (startDeviation(shift.plannedStart, shift.creditedStart!)
+                case final deviation?)
+              DeviationNotice(deviation: deviation),
+          ],
+          if (shift.creditedEnd != null) ...[
+            Text('Учтённый конец: ${_dateTime(shift.creditedEnd!)}'),
+            if (endDeviation(shift.plannedEnd, shift.creditedEnd!)
+                case final deviation?)
+              DeviationNotice(deviation: deviation),
+          ],
           if (shift.status == ShiftStatus.armed &&
               shift.plannedStart.isBefore(DateTime.now()))
             const Text('Плановое начало прошло. Подтвердите прибытие.'),
