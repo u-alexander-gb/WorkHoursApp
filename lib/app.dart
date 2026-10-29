@@ -228,6 +228,16 @@ class WorkHome extends StatefulWidget {
 
 class _WorkHomeState extends State<WorkHome> {
   final ReminderService reminders = ReminderService();
+  String get _effectiveLanguageCode {
+    if (widget.languageCode != null) return widget.languageCode!;
+    for (final locale in WidgetsBinding.instance.platformDispatcher.locales) {
+      if (const ['en', 'ru', 'uk', 'pl', 'es', 'tr', 'uz']
+          .contains(locale.languageCode)) {
+        return locale.languageCode;
+      }
+    }
+    return 'en';
+  }
   int tab = 0;
   bool loading = true;
   List<WorkProject> projects = [];
@@ -438,7 +448,7 @@ class _WorkHomeState extends State<WorkHome> {
       when: when,
       projectName: shift.projectName,
       kind: kind,
-      languageCode: Localizations.localeOf(context).languageCode,
+      languageCode: _effectiveLanguageCode,
     );
   }
 
@@ -618,7 +628,7 @@ class _WorkHomeState extends State<WorkHome> {
           when: result.$2,
           projectName: projects.singleWhere((p) => p.id == result.$1).name,
           kind: ReminderKind.checkIn,
-          languageCode: Localizations.localeOf(context).languageCode,
+          languageCode: _effectiveLanguageCode,
         );
         if (Platform.isAndroid && mounted && !reminder.scheduled &&
             result.$2.isAfter(DateTime.now())) {
@@ -662,7 +672,7 @@ class _WorkHomeState extends State<WorkHome> {
           when: shift.plannedStart,
           projectName: shift.projectName,
           kind: ReminderKind.confirmStart,
-          languageCode: Localizations.localeOf(context).languageCode,
+          languageCode: _effectiveLanguageCode,
         );
         if (Platform.isAndroid && mounted && !reminder.scheduled &&
             shift.plannedStart.isAfter(DateTime.now())) {
@@ -985,7 +995,7 @@ class _WorkHomeState extends State<WorkHome> {
             when: plannedStart,
             projectName: shift.projectName,
             kind: ReminderKind.confirmStart,
-            languageCode: Localizations.localeOf(context).languageCode,
+            languageCode: _effectiveLanguageCode,
           );
           if (Platform.isAndroid && !result.scheduled && mounted) {
             _showError(context, 'Время изменено, но напоминание не назначено');
