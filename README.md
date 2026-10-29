@@ -42,6 +42,8 @@ flutter build apk --debug
 - [Функциональный дизайн](docs/functional-design.md)
 - [Модель данных](docs/data-model.md)
 - [План разработки](docs/implementation-plan.md)
+- [История версий](CHANGELOG.md)
+- [Нумерация выпусков](docs/versioning.md)
 
 ## Лицензия
 
