@@ -75,7 +75,8 @@ class AppText extends material.StatelessWidget {
 const _messages = <String, List<String>>{
   'Учёт рабочего времени': ['Work hours', 'Облік робочого часу', 'Ewidencja czasu pracy', 'Registro de horas', 'Çalışma saatleri', 'Ish soatlari'],
   'Меню': ['Menu', 'Меню', 'Menu', 'Menú', 'Menü', 'Menyu'],
-  '© 2026 Alexander. Лицензия MIT.': ['© 2026 Alexander. MIT License.', '© 2026 Alexander. Ліцензія MIT.', '© 2026 Alexander. Licencja MIT.', '© 2026 Alexander. Licencia MIT.', '© 2026 Alexander. MIT Lisansı.', '© 2026 Alexander. MIT litsenziyasi.'],
+  'Версия': ['Version', 'Версія', 'Wersja', 'Versión', 'Sürüm', 'Versiya'],
+  'Закрыть': ['Close', 'Закрити', 'Zamknij', 'Cerrar', 'Kapat', 'Yopish'],
   'Язык приложения': ['Language', 'Мова застосунку', 'Język aplikacji', 'Idioma de la aplicación', 'Uygulama dili', 'Ilova tili'],
   'Системный': ['System default', 'Системна', 'Systemowy', 'Del sistema', 'Sistem dili', 'Tizim tili'],
   'Сегодня': ['Today', 'Сьогодні', 'Dzisiaj', 'Hoy', 'Bugün', 'Bugun'],

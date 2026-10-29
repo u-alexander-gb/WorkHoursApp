@@ -26,13 +26,26 @@ jobs:
       - name: Test
         run: flutter test --reporter expanded --timeout 45s
         timeout-minutes: 5
-      - name: Build debug APK
-        run: flutter build apk --debug
-      - name: Save APK
+      - name: Configure release signing
+        if: github.event_name == 'push'
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          test -n "$ANDROID_KEYSTORE_BASE64"
+          test -n "$ANDROID_KEY_PASSWORD"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/workhours-release.jks
+          printf 'storePassword=%s\nkeyPassword=%s\nkeyAlias=workhours\nstoreFile=../workhours-release.jks\n' \
+            "$ANDROID_KEY_PASSWORD" "$ANDROID_KEY_PASSWORD" > android/key.properties
+      - name: Build signed release APK
+        if: github.event_name == 'push'
+        run: flutter build apk --release
+      - name: Save release APK
+        if: github.event_name == 'push'
         uses: actions/upload-artifact@v4
         with:
-          name: work-hours-debug-apk
-          path: build/app/outputs/flutter-apk/app-debug.apk
+          name: work-hours-release-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
 
   windows-build:
     runs-on: windows-latest

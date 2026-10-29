@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'src/backup_codec.dart';
@@ -228,6 +229,7 @@ class WorkHome extends StatefulWidget {
 
 class _WorkHomeState extends State<WorkHome> {
   final ReminderService reminders = ReminderService();
+  PackageInfo? packageInfo;
   String get _effectiveLanguageCode {
     if (widget.languageCode != null) return widget.languageCode!;
     for (final locale in WidgetsBinding.instance.platformDispatcher.locales) {
@@ -254,6 +256,7 @@ class _WorkHomeState extends State<WorkHome> {
   @override
   void initState() {
     super.initState();
+    _loadPackageInfo();
     reminders.onTap = () {
       if (!mounted) return;
       setState(() => tab = 0);
@@ -264,6 +267,15 @@ class _WorkHomeState extends State<WorkHome> {
     clockTimer = Timer.periodic(const Duration(minutes: 1), (_) {
       if (mounted) setState(() {});
     });
+  }
+
+  Future<void> _loadPackageInfo() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      if (mounted) setState(() => packageInfo = info);
+    } catch (_) {
+      // The rest of the app remains usable if package metadata is unavailable.
+    }
   }
 
   @override
@@ -1165,29 +1177,7 @@ class _WorkHomeState extends State<WorkHome> {
   Future<void> _chooseLanguage() async {
     final selected = await showDialog<String>(
       context: context,
-      builder: (dialogContext) => SimpleDialog(
-        title: const AppText('Язык приложения'),
-        children: [
-          for (final entry in const [
-            ('system', 'Системный'),
-            ('en', 'English'),
-            ('ru', 'Русский'),
-            ('uk', 'Українська'),
-            ('pl', 'Polski'),
-            ('es', 'Español'),
-            ('tr', 'Türkçe'),
-            ('uz', 'Oʻzbekcha'),
-          ])
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(dialogContext, entry.$1),
-              child: Row(children: [
-                Expanded(child: AppText(entry.$2)),
-                if (entry.$1 == (widget.languageCode ?? 'system'))
-                  const Icon(Icons.check),
-              ]),
-            ),
-        ],
-      ),
+      builder: (_) => LanguagePickerDialog(selectedLanguageCode: widget.languageCode),
     );
     if (selected != null) {
       widget.onLanguageChanged(selected == 'system' ? null : selected);
@@ -1422,18 +1412,11 @@ class _WorkHomeState extends State<WorkHome> {
   }
 
   void _showAbout() {
-    showAboutDialog(
+    showDialog<void>(
       context: context,
-      applicationName: 'WorkHoursApp',
-      applicationLegalese: appText(context, '© 2026 Alexander. Лицензия MIT.'),
-      children: const [
-        SizedBox(height: 12),
-        AppText('Создатель: Alexander (u-alexander-gb).'),
-        SizedBox(height: 8),
-        AppText('Приложение для личного учёта рабочих смен, часов и тарифов.'),
-        SizedBox(height: 8),
-        SelectableText('github.com/u-alexander-gb/WorkHoursApp'),
-      ],
+      builder: (_) => WorkHoursAboutDialog(version: packageInfo == null
+          ? '—'
+          : '${packageInfo!.version}+${packageInfo!.buildNumber}'),
     );
   }
 
@@ -1620,25 +1603,11 @@ class _WorkHomeState extends State<WorkHome> {
       appBar: AppBar(
         title: AppText(titles[tab]),
         actions: [
-          PopupMenuButton<String>(
-            tooltip: appText(context, 'Меню'),
-            onSelected: (value) {
-              if (value == 'export') {
-                _exportBackup();
-              } else if (value == 'import') {
-                _importBackup();
-              } else if (value == 'about') {
-                _showAbout();
-              } else if (value == 'language') {
-                _chooseLanguage();
-              }
-            },
-            itemBuilder: (_) => const [
-              PopupMenuItem(value: 'export', child: AppText('Сохранить копию')),
-              PopupMenuItem(value: 'import', child: AppText('Восстановить копию')),
-              PopupMenuItem(value: 'about', child: AppText('О приложении')),
-              PopupMenuItem(value: 'language', child: AppText('Язык приложения')),
-            ],
+          WorkHoursMenuButton(
+            onExport: _exportBackup,
+            onImport: _importBackup,
+            onAbout: _showAbout,
+            onLanguage: _chooseLanguage,
           ),
         ],
       ),
@@ -1669,4 +1638,91 @@ class _WorkHomeState extends State<WorkHome> {
       ),
     );
   }
+}
+
+class LanguagePickerDialog extends StatelessWidget {
+  const LanguagePickerDialog({super.key, required this.selectedLanguageCode});
+
+  final String? selectedLanguageCode;
+
+  @override
+  Widget build(BuildContext context) => SimpleDialog(
+        title: const AppText('Язык приложения'),
+        children: [
+          for (final entry in const [
+            ('system', 'Системный'),
+            ('en', 'English'),
+            ('ru', 'Русский'),
+            ('uk', 'Українська'),
+            ('pl', 'Polski'),
+            ('es', 'Español'),
+            ('tr', 'Türkçe'),
+            ('uz', 'Oʻzbekcha'),
+          ])
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, entry.$1),
+              child: Row(children: [
+                Expanded(child: AppText(entry.$2)),
+                if (entry.$1 == (selectedLanguageCode ?? 'system'))
+                  const Icon(Icons.check),
+              ]),
+            ),
+        ],
+      );
+}
+
+class WorkHoursMenuButton extends StatelessWidget {
+  const WorkHoursMenuButton({super.key, required this.onExport,
+      required this.onImport, required this.onAbout, required this.onLanguage});
+
+  final VoidCallback onExport;
+  final VoidCallback onImport;
+  final VoidCallback onAbout;
+  final VoidCallback onLanguage;
+
+  @override
+  Widget build(BuildContext context) => PopupMenuButton<String>(
+        tooltip: appText(context, 'Меню'),
+        onSelected: (value) {
+          switch (value) {
+            case 'export': onExport();
+            case 'import': onImport();
+            case 'about': onAbout();
+            case 'language': onLanguage();
+          }
+        },
+        itemBuilder: (_) => const [
+          PopupMenuItem(value: 'export', child: AppText('Сохранить копию')),
+          PopupMenuItem(value: 'import', child: AppText('Восстановить копию')),
+          PopupMenuItem(value: 'about', child: AppText('О приложении')),
+          PopupMenuItem(value: 'language', child: AppText('Язык приложения')),
+        ],
+      );
+}
+
+class WorkHoursAboutDialog extends StatelessWidget {
+  const WorkHoursAboutDialog({super.key, required this.version});
+
+  final String version;
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: const AppText('О приложении'),
+        content: Column(mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('WorkHoursApp', style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 8),
+          Text('${appText(context, 'Версия')}: $version'),
+          const SizedBox(height: 16),
+          const AppText('Создатель: Alexander (u-alexander-gb).'),
+          const SizedBox(height: 8),
+          const AppText('Приложение для личного учёта рабочих смен, часов и тарифов.'),
+          const SizedBox(height: 8),
+          const SelectableText('github.com/u-alexander-gb/WorkHoursApp'),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context),
+              child: const AppText('Закрыть')),
+        ],
+      );
 }
