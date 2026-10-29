@@ -6,6 +6,8 @@ void main() {
       (tester) async {
     var closed = false;
     await tester.pumpWidget(MaterialApp(
+      locale: const Locale('ru'),
+      supportedLocales: const [Locale('ru'), Locale('en')],
       home: Scaffold(body: Builder(builder: (context) => TextButton(
         onPressed: () async {
           await showDialog<String>(
