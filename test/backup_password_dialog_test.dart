@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:work_hours_app/app.dart';
 void main() {
@@ -8,6 +9,11 @@ void main() {
     await tester.pumpWidget(MaterialApp(
       locale: const Locale('ru'),
       supportedLocales: const [Locale('ru'), Locale('en')],
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+      ],
       home: Scaffold(body: Builder(builder: (context) => TextButton(
         onPressed: () async {
           await showDialog<String>(
