@@ -1,4 +1,5 @@
 import 'work_repository.dart';
+import 'app_text.dart';
 
 String _two(int value) => value.toString().padLeft(2, '0');
 
@@ -12,15 +13,17 @@ String _cell(Object? value) {
   return '"${text.replaceAll('"', '""')}"';
 }
 
-String buildReportCsv(Iterable<WorkShift> shifts) {
+String buildReportCsv(Iterable<WorkShift> shifts, {String languageCode = 'ru'}) {
   final completed = shifts
       .where((shift) => shift.status == ShiftStatus.completed &&
           shift.creditedStart != null && shift.creditedEnd != null)
       .toList()
     ..sort((a, b) => a.creditedStart!.compareTo(b.creditedStart!));
   final output = StringBuffer();
-  output.writeln('Проект;Тариф;Начало;Конец;Перерыв, мин;Учтено, мин;'
-      'Ставка за час;Валюта;Начислено');
+  output.writeln([
+    'Проект', 'Тариф', 'Начало', 'Конец', 'Перерыв, мин', 'Учтено, мин',
+    'Ставка за час', 'Валюта', 'Начислено',
+  ].map((value) => _cell(appTextForLanguage(languageCode, value))).join(';'));
   final totals = <String, (int, int)>{};
   var totalMinutes = 0;
   for (final shift in completed) {
@@ -48,11 +51,11 @@ String buildReportCsv(Iterable<WorkShift> shifts) {
     ];
     output.writeln(fields.map(_cell).join(';'));
   }
-  output.writeln(['Всего часов', '', '', '', '', totalMinutes, '', '', '']
+  output.writeln([appTextForLanguage(languageCode, 'Всего часов'), '', '', '', '', totalMinutes, '', '', '']
       .map(_cell).join(';'));
   for (final entry in totals.entries) {
     output.writeln([
-      'Итого', '', '', '', '', entry.value.$1, '', entry.key,
+      appTextForLanguage(languageCode, 'Итого'), '', '', '', '', entry.value.$1, '', entry.key,
       (entry.value.$2 / 100).toStringAsFixed(2).replaceAll('.', ','),
     ].map(_cell).join(';'));
   }

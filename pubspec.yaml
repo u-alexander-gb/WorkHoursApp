@@ -1,13 +1,15 @@
 name: work_hours_app
 description: Offline work shift planning and time tracking for Android and Windows.
 publish_to: none
-version: 0.1.0+1
+version: 0.2.0-beta.1+2
 
 environment:
   sdk: '>=3.9.0 <4.0.0'
 
 dependencies:
   flutter:
+    sdk: flutter
+  flutter_localizations:
     sdk: flutter
   sqflite: ^2.4.2
   sqflite_common_ffi: ^2.3.7+1

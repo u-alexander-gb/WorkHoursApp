@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'app_text.dart';
 
 enum DeviationSeverity { ordinary, significant }
 
@@ -47,7 +48,7 @@ class DeviationNotice extends StatelessWidget {
         Icon(significant ? Icons.warning_amber_outlined : Icons.info_outline,
             color: significant ? colors.error : colors.tertiary),
         const SizedBox(width: 8),
-        Expanded(child: Text(deviation.message)),
+        Expanded(child: AppText(deviation.message)),
       ]),
     );
   }

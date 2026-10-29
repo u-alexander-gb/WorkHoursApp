@@ -5,6 +5,8 @@ import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:timezone/data/latest_all.dart' as tzdata;
 import 'package:timezone/timezone.dart' as tz;
 
+import 'app_text.dart';
+
 class ReminderResult {
   const ReminderResult({required this.scheduled, required this.exact});
   final bool scheduled;
@@ -39,6 +41,7 @@ class ReminderService {
     required DateTime when,
     required String projectName,
     required ReminderKind kind,
+    required String languageCode,
   }) async {
     if (!Platform.isAndroid || !when.isAfter(DateTime.now())) {
       return const ReminderResult(scheduled: false, exact: false);
@@ -61,22 +64,23 @@ class ReminderService {
       ReminderKind.checkOut => 'Пора сделать check-out',
     };
     final body = switch (kind) {
-      ReminderKind.checkIn => '$projectName: выберите тариф и отметьте начало.',
-      ReminderKind.confirmStart => '$projectName: вы на месте?',
-      ReminderKind.checkOut => '$projectName: смена ещё не завершена.',
+      ReminderKind.checkIn => 'Выберите тариф и отметьте начало.',
+      ReminderKind.confirmStart => 'Вы на месте?',
+      ReminderKind.checkOut => 'Смена ещё не завершена.',
     };
     await _plugin.zonedSchedule(
       id: _notificationId(shiftId, kind),
-      title: title,
-      body: body,
+      title: appTextForLanguage(languageCode, title),
+      body: '$projectName: ${appTextForLanguage(languageCode, body)}',
       scheduledDate: tz.TZDateTime.from(when, tz.local),
       notificationDetails: NotificationDetails(
         android: AndroidNotificationDetails(
           kind == ReminderKind.checkOut ? 'shift_end' : 'shift_start',
-          kind == ReminderKind.checkOut ? 'Конец смены' : 'Начало смены',
+          appTextForLanguage(languageCode,
+              kind == ReminderKind.checkOut ? 'Конец смены' : 'Начало смены'),
           channelDescription: kind == ReminderKind.checkOut
-              ? 'Напоминания о завершении работы'
-              : 'Напоминания о начале работы',
+              ? appTextForLanguage(languageCode, 'Напоминания о завершении работы')
+              : appTextForLanguage(languageCode, 'Напоминания о начале работы'),
           importance: Importance.high,
           priority: Priority.high,
         ),

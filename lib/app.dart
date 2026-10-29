@@ -5,29 +5,43 @@ import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'src/backup_codec.dart';
+import 'src/app_text.dart';
 import 'src/plan_calendar.dart';
 import 'src/time_deviation.dart';
 import 'src/work_repository.dart';
 import 'src/reminder_service.dart';
 import 'src/report_csv.dart';
 
-void _showError(BuildContext context, Object error) =>
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$error')));
+void _showError(BuildContext context, Object error) {
+  final message = switch (error) {
+    StateError e => e.message,
+    ArgumentError e => '${e.message}',
+    FormatException e => e.message,
+    _ => '$error',
+  };
+  ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: AppText(message)));
+}
 
 String _two(int number) => number.toString().padLeft(2, '0');
 String _date(DateTime date) => '${_two(date.day)}.${_two(date.month)}.${date.year}';
 String _time(DateTime date) => '${_two(date.hour)}:${_two(date.minute)}';
 String _dateTime(DateTime date) => '${_date(date)} ${_time(date)}';
-String _duration(int minutes) => '${minutes ~/ 60} ч ${_two(minutes % 60)} мин';
-String _timeLeft(Duration duration) {
+String _duration(BuildContext context, int minutes) =>
+    '${minutes ~/ 60}${appText(context, ' ч ')}'
+    '${_two(minutes % 60)}${appText(context, ' мин')}';
+String _timeLeft(BuildContext context, Duration duration) {
   final minutes = (duration.inSeconds.abs() + 59) ~/ 60;
   final days = minutes ~/ 1440;
   final hours = (minutes % 1440) ~/ 60;
   final rest = minutes % 60;
-  return days > 0 ? '$days д $hours ч' : '$hours ч ${_two(rest)} мин';
+  return days > 0
+      ? '$days${appText(context, ' д ')}$hours${appText(context, ' ч')}'
+      : '$hours${appText(context, ' ч ')}${_two(rest)}${appText(context, ' мин')}';
 }
 String _money(int cents, String currency) =>
     '${(cents / 100).toStringAsFixed(2).replaceAll('.', ',')} $currency';
@@ -72,18 +86,18 @@ class _BackupPasswordDialogState extends State<BackupPasswordDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-        title: Text(widget.create
+        title: AppText(widget.create
             ? 'Пароль резервной копии'
             : 'Открыть резервную копию'),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
-          Text(widget.create
+          AppText(widget.create
               ? 'Запомните пароль: без него восстановить копию нельзя. Минимум 12 символов.'
               : 'Введите пароль для проверки и просмотра копии.'),
           TextField(
             controller: password,
             obscureText: hidden,
             autofocus: true,
-            decoration: const InputDecoration(labelText: 'Пароль'),
+            decoration: InputDecoration(labelText: appText(context, 'Пароль')),
             onChanged: (_) => setState(() {}),
           ),
           if (widget.create)
@@ -91,17 +105,17 @@ class _BackupPasswordDialogState extends State<BackupPasswordDialog> {
               controller: repeated,
               obscureText: hidden,
               decoration: InputDecoration(
-                labelText: 'Повторите пароль',
+                labelText: appText(context, 'Повторите пароль'),
                 errorText: repeated.text.isNotEmpty &&
                         repeated.text != password.text
-                    ? 'Пароли не совпадают'
+                    ? appText(context, 'Пароли не совпадают')
                     : null,
               ),
               onChanged: (_) => setState(() {}),
             ),
           CheckboxListTile(
             contentPadding: EdgeInsets.zero,
-            title: const Text('Показать пароль'),
+            title: const AppText('Показать пароль'),
             value: !hidden,
             onChanged: (value) => setState(() => hidden = value != true),
           ),
@@ -109,7 +123,7 @@ class _BackupPasswordDialogState extends State<BackupPasswordDialog> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Отмена'),
+            child: const AppText('Отмена'),
           ),
           FilledButton(
             onPressed: password.text.isEmpty ||
@@ -118,7 +132,7 @@ class _BackupPasswordDialogState extends State<BackupPasswordDialog> {
                             repeated.text != password.text))
                 ? null
                 : () => Navigator.pop(context, password.text),
-            child: Text(widget.create ? 'Продолжить' : 'Проверить'),
+            child: AppText(widget.create ? 'Продолжить' : 'Проверить'),
           ),
         ],
       );
@@ -133,10 +147,49 @@ class WorkHoursApp extends StatefulWidget {
 
 class _WorkHoursAppState extends State<WorkHoursApp> {
   late final Future<WorkRepository> repository = WorkRepository.open();
+  final SharedPreferencesAsync preferences = SharedPreferencesAsync();
+  String? languageCode;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLanguage();
+  }
+
+  Future<void> _loadLanguage() async {
+    try {
+      final saved = await preferences.getString('language_code');
+      if (mounted && saved != null &&
+          const ['en', 'ru', 'uk', 'pl', 'es', 'tr', 'uz'].contains(saved)) {
+        setState(() => languageCode = saved);
+      }
+    } catch (_) {
+      // The system locale remains available when preferences cannot be read.
+    }
+  }
+
+  Future<void> _changeLanguage(String? code) async {
+    setState(() => languageCode = code);
+    if (code == null) {
+      await preferences.remove('language_code');
+    } else {
+      await preferences.setString('language_code', code);
+    }
+  }
 
   @override
   Widget build(BuildContext context) => MaterialApp(
-        title: 'Учёт рабочего времени',
+        onGenerateTitle: (context) => appText(context, 'Учёт рабочего времени'),
+        locale: languageCode == null ? null : Locale(languageCode!),
+        supportedLocales: const [
+          Locale('en'), Locale('ru'), Locale('uk'), Locale('pl'),
+          Locale('es'), Locale('tr'), Locale('uz'),
+        ],
+        localizationsDelegates: const [
+          GlobalMaterialLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+        ],
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
           colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF315C84)),
@@ -147,20 +200,27 @@ class _WorkHoursAppState extends State<WorkHoursApp> {
           builder: (context, snapshot) {
             if (snapshot.hasError) {
               return Scaffold(
-                  body: Center(child: Text('Ошибка базы данных: ${snapshot.error}')));
+                  body: Center(child: AppText('Ошибка базы данных: ${snapshot.error}')));
             }
             if (!snapshot.hasData) {
               return const Scaffold(body: Center(child: CircularProgressIndicator()));
             }
-            return WorkHome(repository: snapshot.data!);
+            return WorkHome(
+              repository: snapshot.data!,
+              languageCode: languageCode,
+              onLanguageChanged: _changeLanguage,
+            );
           },
         ),
       );
 }
 
 class WorkHome extends StatefulWidget {
-  const WorkHome({super.key, required this.repository});
+  const WorkHome({super.key, required this.repository,
+      required this.languageCode, required this.onLanguageChanged});
   final WorkRepository repository;
+  final String? languageCode;
+  final ValueChanged<String?> onLanguageChanged;
 
   @override
   State<WorkHome> createState() => _WorkHomeState();
@@ -276,7 +336,7 @@ class _WorkHomeState extends State<WorkHome> {
       );
       if (saved != null && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Резервная копия сохранена')),
+          const SnackBar(content: AppText('Резервная копия сохранена')),
         );
       }
     } catch (error) {
@@ -312,23 +372,23 @@ class _WorkHomeState extends State<WorkHome> {
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (dialogContext) => AlertDialog(
-          title: const Text('Восстановить данные?'),
-          content: Text('Файл: ${file.name}\n'
-              'Создан: ${_dateTime(preview.createdAt.toLocal())}\n'
-              'Проектов: ${preview.counts['projects']}, '
-              'тарифов: ${preview.counts['rates']}\n'
-              'Смен: ${preview.counts['shifts']}, '
-              'событий: ${preview.counts['shift_events']}\n\n'
-              '${encrypted ? 'Пароль и целостность проверены.' : 'Старая копия без шифрования.'}\n'
-              'Текущие данные будут заменены. Сначала сохраните их копию.'),
+          title: const AppText('Восстановить данные?'),
+          content: AppText('${appText(context, 'Файл')}: ${file.name}\n'
+              '${appText(context, 'Создан')}: ${_dateTime(preview.createdAt.toLocal())}\n'
+              '${appText(context, 'Проектов')}: ${preview.counts['projects']}, '
+              '${appText(context, 'тарифов')}: ${preview.counts['rates']}\n'
+              '${appText(context, 'Смен')}: ${preview.counts['shifts']}, '
+              '${appText(context, 'событий')}: ${preview.counts['shift_events']}\n\n'
+              '${appText(context, encrypted ? 'Пароль и целостность проверены.' : 'Старая копия без шифрования.')}\n'
+              '${appText(context, 'Текущие данные будут заменены. Сначала сохраните их копию.')}'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Отмена'),
+              child: const AppText('Отмена'),
             ),
             FilledButton(
               onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('Восстановить'),
+              child: const AppText('Восстановить'),
             ),
           ],
         ),
@@ -349,7 +409,7 @@ class _WorkHomeState extends State<WorkHome> {
       await _reload();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Данные восстановлены')),
+          const SnackBar(content: AppText('Данные восстановлены')),
         );
       }
     } catch (error) {
@@ -378,6 +438,7 @@ class _WorkHomeState extends State<WorkHome> {
       when: when,
       projectName: shift.projectName,
       kind: kind,
+      languageCode: Localizations.localeOf(context).languageCode,
     );
   }
 
@@ -414,26 +475,26 @@ class _WorkHomeState extends State<WorkHome> {
       context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, update) => AlertDialog(
-          title: const Text('Новый проект'),
+          title: const AppText('Новый проект'),
           content: Column(mainAxisSize: MainAxisSize.min, children: [
             TextField(
               controller: controller,
               autofocus: true,
-              decoration: const InputDecoration(labelText: 'Название работы или проекта'),
+              decoration: InputDecoration(labelText: appText(context, 'Название работы или проекта')),
             ),
             SwitchListTile(
-              title: const Text('Учитывать оплату'),
-              subtitle: const Text('Выключено: учитываются только часы'),
+              title: const AppText('Учитывать оплату'),
+              subtitle: const AppText('Выключено: учитываются только часы'),
               value: trackPay,
               onChanged: (value) => update(() => trackPay = value),
             ),
           ]),
           actions: [
             TextButton(onPressed: () => Navigator.pop(dialogContext),
-                child: const Text('Отмена')),
+                child: const AppText('Отмена')),
             FilledButton(
                 onPressed: () => Navigator.pop(dialogContext, (controller.text, trackPay)),
-                child: const Text('Сохранить')),
+                child: const AppText('Сохранить')),
           ],
         ),
       ),
@@ -451,21 +512,21 @@ class _WorkHomeState extends State<WorkHome> {
     final result = await showFormDialogUntilClosed<(String, String)>(
       context,
       builder: (context) => AlertDialog(
-        title: Text('Тариф: ${project.name}'),
+        title: AppText('${appText(context, 'Тариф')}: ${project.name}'),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
           TextField(
               controller: name,
-              decoration: const InputDecoration(labelText: 'Название тарифа')),
+              decoration: InputDecoration(labelText: appText(context, 'Название тарифа'))),
           TextField(
               controller: amount,
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(labelText: 'Евро за час')),
+              decoration: InputDecoration(labelText: appText(context, 'Евро за час'))),
         ]),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Отмена')),
+          TextButton(onPressed: () => Navigator.pop(context), child: const AppText('Отмена')),
           FilledButton(
               onPressed: () => Navigator.pop(context, (name.text, amount.text)),
-              child: const Text('Сохранить')),
+              child: const AppText('Сохранить')),
         ],
       ),
     );
@@ -499,13 +560,13 @@ class _WorkHomeState extends State<WorkHome> {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, update) => AlertDialog(
-          title: const Text('Запланировать смену'),
+          title: const AppText('Запланировать смену'),
           content: Column(mainAxisSize: MainAxisSize.min, children: [
             DropdownButtonFormField<String>(
               initialValue: projectId,
-              decoration: const InputDecoration(labelText: 'Проект'),
+              decoration: InputDecoration(labelText: appText(context, 'Проект')),
               items: projects
-                  .map((p) => DropdownMenuItem(value: p.id, child: Text(p.name)))
+                  .map((p) => DropdownMenuItem(value: p.id, child: AppText(p.name)))
                   .toList(),
               onChanged: (id) {
                 if (id != null) {
@@ -514,8 +575,8 @@ class _WorkHomeState extends State<WorkHome> {
               },
             ),
             ListTile(
-              title: const Text('Начало'),
-              subtitle: Text(_dateTime(start)),
+              title: const AppText('Начало'),
+              subtitle: AppText(_dateTime(start)),
               onTap: () async {
                 final chosen = await _pickDateTime(start);
                 if (chosen != null) {
@@ -527,8 +588,8 @@ class _WorkHomeState extends State<WorkHome> {
               },
             ),
             ListTile(
-              title: const Text('Ожидаемый конец'),
-              subtitle: Text(_dateTime(end)),
+              title: const AppText('Ожидаемый конец'),
+              subtitle: AppText(_dateTime(end)),
               onTap: () async {
                 final chosen = await _pickDateTime(end);
                 if (chosen != null) {
@@ -540,10 +601,10 @@ class _WorkHomeState extends State<WorkHome> {
           actions: [
             TextButton(
                 onPressed: () => Navigator.pop(dialogContext),
-                child: const Text('Отмена')),
+                child: const AppText('Отмена')),
             FilledButton(
                 onPressed: () => Navigator.pop(dialogContext, (projectId, start, end)),
-                child: const Text('Добавить')),
+                child: const AppText('Добавить')),
           ],
         ),
       ),
@@ -557,6 +618,7 @@ class _WorkHomeState extends State<WorkHome> {
           when: result.$2,
           projectName: projects.singleWhere((p) => p.id == result.$1).name,
           kind: ReminderKind.checkIn,
+          languageCode: Localizations.localeOf(context).languageCode,
         );
         if (Platform.isAndroid && mounted && !reminder.scheduled &&
             result.$2.isAfter(DateTime.now())) {
@@ -579,12 +641,12 @@ class _WorkHomeState extends State<WorkHome> {
       rateId = await showDialog<String>(
         context: context,
         builder: (context) => SimpleDialog(
-          title: const Text('Выберите тариф'),
+          title: const AppText('Выберите тариф'),
           children: available
               .map((rate) => SimpleDialogOption(
                     onPressed: () => Navigator.pop(context, rate.id),
-                    child: Text('${rate.name} — '
-                        '${_money(rate.centsPerHour, rate.currency)}/ч'),
+                    child: AppText('${rate.name} — '
+                        '${_money(rate.centsPerHour, rate.currency)}${appText(context, '/ч')}'),
                   ))
               .toList(),
         ),
@@ -600,6 +662,7 @@ class _WorkHomeState extends State<WorkHome> {
           when: shift.plannedStart,
           projectName: shift.projectName,
           kind: ReminderKind.confirmStart,
+          languageCode: Localizations.localeOf(context).languageCode,
         );
         if (Platform.isAndroid && mounted && !reminder.scheduled &&
             shift.plannedStart.isAfter(DateTime.now())) {
@@ -616,16 +679,16 @@ class _WorkHomeState extends State<WorkHome> {
     final start = await showDialog<DateTime>(
       context: context,
       builder: (dialogContext) => SimpleDialog(
-        title: const Text('Во сколько началась работа?'),
+        title: const AppText('Во сколько началась работа?'),
         children: [
           if (!shift.plannedStart.isAfter(now))
             SimpleDialogOption(
               onPressed: () => Navigator.pop(dialogContext, shift.plannedStart),
-              child: Text('По плану — ${_time(shift.plannedStart)}'),
+              child: AppText('${appText(context, 'По плану')} — ${_time(shift.plannedStart)}'),
             ),
           SimpleDialogOption(
             onPressed: () => Navigator.pop(dialogContext, now),
-            child: Text('Сейчас — ${_time(now)}'),
+            child: AppText('${appText(context, 'Сейчас')} — ${_time(now)}'),
           ),
           SimpleDialogOption(
             onPressed: () async {
@@ -634,7 +697,7 @@ class _WorkHomeState extends State<WorkHome> {
                 Navigator.pop(dialogContext, chosen);
               }
             },
-            child: const Text('Выбрать другое время'),
+            child: const AppText('Выбрать другое время'),
           ),
         ],
       ),
@@ -664,11 +727,11 @@ class _WorkHomeState extends State<WorkHome> {
       context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, update) => AlertDialog(
-          title: const Text('Завершить смену'),
+          title: const AppText('Завершить смену'),
           content: Column(mainAxisSize: MainAxisSize.min, children: [
             ListTile(
-              title: const Text('Время окончания'),
-              subtitle: Text(_dateTime(end)),
+              title: const AppText('Время окончания'),
+              subtitle: AppText(_dateTime(end)),
               onTap: () async {
                 final chosen = await _pickDateTime(end);
                 if (chosen != null) {
@@ -679,14 +742,14 @@ class _WorkHomeState extends State<WorkHome> {
             TextField(
               controller: breakInput,
               keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                  labelText: 'Неоплачиваемый перерыв, минуты'),
+              decoration: InputDecoration(
+                  labelText: appText(context, 'Неоплачиваемый перерыв, минуты')),
             ),
           ]),
           actions: [
             TextButton(
                 onPressed: () => Navigator.pop(dialogContext),
-                child: const Text('Отмена')),
+                child: const AppText('Отмена')),
             FilledButton(
               onPressed: () {
                 final minutes = int.tryParse(breakInput.text.trim());
@@ -694,7 +757,7 @@ class _WorkHomeState extends State<WorkHome> {
                   Navigator.pop(dialogContext, (end, minutes));
                 }
               },
-              child: const Text('Check-out'),
+              child: const AppText('Check-out'),
             ),
           ],
         ),
@@ -721,24 +784,24 @@ class _WorkHomeState extends State<WorkHome> {
     final approved = await showFormDialogUntilClosed<bool>(
       context,
       builder: (dialogContext) => AlertDialog(
-        title: Text(significant ? 'Проверьте время' : 'Отклонение от плана'),
+        title: AppText(significant ? 'Проверьте время' : 'Отклонение от плана'),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
           DeviationNotice(deviation: deviation),
           if (significant) ...[
-            const Text('Проверьте время. При необходимости укажите причину.'),
+            const AppText('Проверьте время. При необходимости укажите причину.'),
             TextField(
               controller: reasonInput,
-              decoration: const InputDecoration(labelText: 'Причина (необязательно)'),
+              decoration: InputDecoration(labelText: appText(context, 'Причина (необязательно)')),
             ),
           ],
         ]),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Назад')),
+              child: const AppText('Назад')),
           FilledButton(
               onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('Сохранить фактическое время')),
+              child: const AppText('Сохранить фактическое время')),
         ],
       ),
     );
@@ -762,15 +825,15 @@ class _WorkHomeState extends State<WorkHome> {
       context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, update) => AlertDialog(
-          title: const Text('Исправить смену'),
+          title: const AppText('Исправить смену'),
           content: SingleChildScrollView(
             child: Column(mainAxisSize: MainAxisSize.min, children: [
               if (shift.status == ShiftStatus.planned)
                 DropdownButtonFormField<String>(
                   initialValue: projectId,
-                  decoration: const InputDecoration(labelText: 'Проект'),
+                  decoration: InputDecoration(labelText: appText(context, 'Проект')),
                   items: projects
-                      .map((p) => DropdownMenuItem(value: p.id, child: Text(p.name)))
+                      .map((p) => DropdownMenuItem(value: p.id, child: AppText(p.name)))
                       .toList(),
                   onChanged: (value) {
                     if (value != null) {
@@ -781,8 +844,8 @@ class _WorkHomeState extends State<WorkHome> {
               if (shift.status == ShiftStatus.planned ||
                   shift.status == ShiftStatus.armed) ...[
                 ListTile(
-                  title: const Text('Плановое начало'),
-                  subtitle: Text(_dateTime(plannedStart)),
+                  title: const AppText('Плановое начало'),
+                  subtitle: AppText(_dateTime(plannedStart)),
                   onTap: () async {
                     final selected = shift.status == ShiftStatus.armed
                         ? await _pickTimeOnDay(plannedStart)
@@ -797,8 +860,8 @@ class _WorkHomeState extends State<WorkHome> {
                   },
                 ),
                 ListTile(
-                  title: const Text('Плановый конец'),
-                  subtitle: Text(_dateTime(plannedEnd)),
+                  title: const AppText('Плановый конец'),
+                  subtitle: AppText(_dateTime(plannedEnd)),
                   onTap: () async {
                     final selected = shift.status == ShiftStatus.armed
                         ? await _pickTimeOnDay(plannedEnd)
@@ -816,12 +879,12 @@ class _WorkHomeState extends State<WorkHome> {
                   initialValue: availableRates.any((rate) => rate.id == rateId)
                       ? rateId
                       : null,
-                  decoration: const InputDecoration(labelText: 'Тариф'),
+                  decoration: InputDecoration(labelText: appText(context, 'Тариф')),
                   items: availableRates
                       .map((rate) => DropdownMenuItem(
                             value: rate.id,
-                            child: Text('${rate.name} — '
-                                '${_money(rate.centsPerHour, rate.currency)}/ч'),
+                            child: AppText('${rate.name} — '
+                                '${_money(rate.centsPerHour, rate.currency)}${appText(context, '/ч')}'),
                           ))
                       .toList(),
                   onChanged: (value) => update(() => rateId = value),
@@ -829,8 +892,8 @@ class _WorkHomeState extends State<WorkHome> {
               if (shift.status == ShiftStatus.active ||
                   shift.status == ShiftStatus.completed)
                 ListTile(
-                  title: const Text('Учтённое начало'),
-                  subtitle: Text(_dateTime(creditedStart)),
+                  title: const AppText('Учтённое начало'),
+                  subtitle: AppText(_dateTime(creditedStart)),
                   onTap: () async {
                     final selected = await _pickDateTime(creditedStart);
                     if (selected != null) {
@@ -840,8 +903,8 @@ class _WorkHomeState extends State<WorkHome> {
                 ),
               if (shift.status == ShiftStatus.completed) ...[
                 ListTile(
-                  title: const Text('Учтённый конец'),
-                  subtitle: Text(_dateTime(creditedEnd)),
+                  title: const AppText('Учтённый конец'),
+                  subtitle: AppText(_dateTime(creditedEnd)),
                   onTap: () async {
                     final selected = await _pickDateTime(creditedEnd);
                     if (selected != null) {
@@ -852,16 +915,16 @@ class _WorkHomeState extends State<WorkHome> {
                 TextField(
                   controller: breakInput,
                   keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'Неоплачиваемый перерыв, минуты',
+                  decoration: InputDecoration(
+                    labelText: appText(context, 'Неоплачиваемый перерыв, минуты'),
                   ),
                 ),
               ],
               TextField(
                 controller: reasonInput,
-                decoration: const InputDecoration(
-                  labelText: 'Причина исправления',
-                  hintText: 'Например: ошибся во времени',
+                decoration: InputDecoration(
+                  labelText: appText(context, 'Причина исправления'),
+                  hintText: appText(context, 'Например: ошибся во времени'),
                 ),
               ),
             ]),
@@ -869,10 +932,10 @@ class _WorkHomeState extends State<WorkHome> {
           actions: [
             TextButton(
                 onPressed: () => Navigator.pop(dialogContext, false),
-                child: const Text('Отмена')),
+                child: const AppText('Отмена')),
             FilledButton(
                 onPressed: () => Navigator.pop(dialogContext, true),
-                child: const Text('Сохранить')),
+                child: const AppText('Сохранить')),
           ],
         ),
       ),
@@ -922,6 +985,7 @@ class _WorkHomeState extends State<WorkHome> {
             when: plannedStart,
             projectName: shift.projectName,
             kind: ReminderKind.confirmStart,
+            languageCode: Localizations.localeOf(context).languageCode,
           );
           if (Platform.isAndroid && !result.scheduled && mounted) {
             _showError(context, 'Время изменено, но напоминание не назначено');
@@ -945,22 +1009,22 @@ class _WorkHomeState extends State<WorkHome> {
     final confirmed = await showFormDialogUntilClosed<bool>(
       context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Отменить плановую смену?'),
+        title: const AppText('Отменить плановую смену?'),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
-          Text('${shift.projectName} · ${_dateTime(shift.plannedStart)}'),
+          AppText('${shift.projectName} · ${_dateTime(shift.plannedStart)}'),
           TextField(
             controller: reasonInput,
             autofocus: true,
-            decoration: const InputDecoration(labelText: 'Причина отмены'),
+            decoration: InputDecoration(labelText: appText(context, 'Причина отмены')),
           ),
         ]),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Назад')),
+              child: const AppText('Назад')),
           FilledButton(
               onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('Отменить смену')),
+              child: const AppText('Отменить смену')),
         ],
       ),
     );
@@ -992,20 +1056,22 @@ class _WorkHomeState extends State<WorkHome> {
 
   String _eventDetails(ShiftEvent event) {
     if (event.kind == 'cancelled') {
-      return 'Плановая смена отменена. Причина: ${event.reason ?? 'не указана'}';
+      return '${appText(context, 'Плановая смена отменена. Причина')}: '
+          '${event.reason ?? appText(context, 'не указана')}';
     }
     if (event.kind == 'confirmed' || event.kind == 'completed') {
       final label = event.kind == 'confirmed'
           ? 'Начало подтверждено'
           : 'Смена завершена';
-      return event.reason == null ? label : '$label. Причина: ${event.reason}';
+      return event.reason == null ? appText(context, label)
+          : '${appText(context, label)}. ${appText(context, 'Причина')}: ${event.reason}';
     }
     if (event.before == null || event.after == null) {
       return switch (event.kind) {
-        'planned' => 'Смена запланирована',
-        'armed' => 'Предварительный check-in',
-        'confirmed' => 'Начало подтверждено',
-        'completed' => 'Смена завершена',
+        'planned' => appText(context, 'Смена запланирована'),
+        'armed' => appText(context, 'Предварительный check-in'),
+        'confirmed' => appText(context, 'Начало подтверждено'),
+        'completed' => appText(context, 'Смена завершена'),
         _ => event.kind,
       };
     }
@@ -1025,12 +1091,13 @@ class _WorkHomeState extends State<WorkHome> {
       final before = event.before![entry.key];
       final after = event.after![entry.key];
       if (before != after) {
-        changes.add('${entry.value}: '
+        changes.add('${appText(context, entry.value)}: '
             '${_auditValue(entry.key, before)} → ${_auditValue(entry.key, after)}');
       }
     }
-    final reason = event.reason == null ? '' : 'Причина: ${event.reason}\n';
-    return '$reason${changes.isEmpty ? 'Параметры смены исправлены' : changes.join('\n')}';
+    final reason = event.reason == null ? ''
+        : '${appText(context, 'Причина')}: ${event.reason}\n';
+    return '$reason${changes.isEmpty ? appText(context, 'Параметры смены исправлены') : changes.join('\n')}';
   }
 
   Future<void> _showHistory(WorkShift shift) async {
@@ -1044,11 +1111,11 @@ class _WorkHomeState extends State<WorkHome> {
           child: SizedBox(
             height: MediaQuery.sizeOf(context).height * 0.7,
             child: ListView(children: [
-              const ListTile(title: Text('История смены')),
+              const ListTile(title: AppText('История смены')),
               for (final event in events)
                 ListTile(
-                  title: Text(_dateTime(event.recordedAt)),
-                  subtitle: Text(_eventDetails(event)),
+                  title: AppText(_dateTime(event.recordedAt)),
+                  subtitle: AppText(_eventDetails(event)),
                 ),
             ]),
           ),
@@ -1070,11 +1137,11 @@ class _WorkHomeState extends State<WorkHome> {
           child: SizedBox(
             height: MediaQuery.sizeOf(context).height * 0.6,
             child: ListView(children: [
-              ListTile(title: Text('История проекта: ${project.name}')),
+              ListTile(title: AppText('${appText(context, 'История проекта')}: ${project.name}')),
               for (final event in events)
                 ListTile(
-                  title: Text(_dateTime(event.recordedAt)),
-                  subtitle: Text(event.description),
+                  title: AppText(_dateTime(event.recordedAt)),
+                  subtitle: AppText(event.description),
                 ),
             ]),
           ),
@@ -1082,6 +1149,38 @@ class _WorkHomeState extends State<WorkHome> {
       );
     } catch (error) {
       if (mounted) _showError(context, error);
+    }
+  }
+
+  Future<void> _chooseLanguage() async {
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => SimpleDialog(
+        title: const AppText('Язык приложения'),
+        children: [
+          for (final entry in const [
+            ('system', 'Системный'),
+            ('en', 'English'),
+            ('ru', 'Русский'),
+            ('uk', 'Українська'),
+            ('pl', 'Polski'),
+            ('es', 'Español'),
+            ('tr', 'Türkçe'),
+            ('uz', 'Oʻzbekcha'),
+          ])
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(dialogContext, entry.$1),
+              child: Row(children: [
+                Expanded(child: AppText(entry.$2)),
+                if (entry.$1 == (widget.languageCode ?? 'system'))
+                  const Icon(Icons.check),
+              ]),
+            ),
+        ],
+      ),
+    );
+    if (selected != null) {
+      widget.onLanguageChanged(selected == 'system' ? null : selected);
     }
   }
 
@@ -1102,13 +1201,14 @@ class _WorkHomeState extends State<WorkHome> {
         ? 1.0
         : (now.difference(begin).inSeconds / total).clamp(0.0, 1.0).toDouble();
     final left = due.difference(now);
-    final label = active ? 'планового конца' : 'начала';
+    final label = active ? appText(context, 'планового конца')
+        : appText(context, 'начала');
     return Padding(
       padding: const EdgeInsets.only(top: 8),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(left.isNegative
-            ? 'Время $label прошло на ${_timeLeft(left)}'
-            : 'До $label: ${_timeLeft(left)}'),
+        AppText(left.isNegative
+            ? '${appText(context, 'Время')} $label ${appText(context, 'прошло на')} ${_timeLeft(context, left)}'
+            : '${appText(context, 'До')} $label: ${_timeLeft(context, left)}'),
         const SizedBox(height: 4),
         LinearProgressIndicator(value: progress),
       ]),
@@ -1128,57 +1228,57 @@ class _WorkHomeState extends State<WorkHome> {
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(shift.projectName, style: Theme.of(context).textTheme.titleMedium),
+          AppText(shift.projectName, style: Theme.of(context).textTheme.titleMedium),
           AnimatedSwitcher(duration: const Duration(milliseconds: 250),
             child: Row(key: ValueKey(shift.status), children: [
             Icon(shiftStatusIcon(shift.status), size: 19,
                 color: shiftStatusColor(shift.status,
                     Theme.of(context).colorScheme)),
             const SizedBox(width: 6),
-            Expanded(child: Text('${_dateTime(shift.plannedStart)} · $status')),
+            Expanded(child: AppText('${_dateTime(shift.plannedStart)} · ${appText(context, status)}')),
           ])),
           ?countdown,
           if (shift.creditedStart != null) ...[
-            Text('Учтённое начало: ${_dateTime(shift.creditedStart!)}'),
+            AppText('${appText(context, 'Учтённое начало')}: ${_dateTime(shift.creditedStart!)}'),
             if (startDeviation(shift.plannedStart, shift.creditedStart!)
                 case final deviation?)
               DeviationNotice(deviation: deviation),
           ],
           if (shift.creditedEnd != null) ...[
-            Text('Учтённый конец: ${_dateTime(shift.creditedEnd!)}'),
+            AppText('${appText(context, 'Учтённый конец')}: ${_dateTime(shift.creditedEnd!)}'),
             if (endDeviation(shift.plannedEnd, shift.creditedEnd!)
                 case final deviation?)
               DeviationNotice(deviation: deviation),
           ],
           if (shift.status == ShiftStatus.armed &&
               shift.plannedStart.isBefore(DateTime.now()))
-            const Text('Плановое начало прошло. Подтвердите прибытие.'),
+            const AppText('Плановое начало прошло. Подтвердите прибытие.'),
           if (shift.status == ShiftStatus.planned &&
               shift.plannedStart.isBefore(DateTime.now()))
-            const Text('Плановое начало прошло. Сделайте check-in.'),
+            const AppText('Плановое начало прошло. Сделайте check-in.'),
           if (shift.status == ShiftStatus.active &&
               shift.plannedEnd != null &&
               shift.plannedEnd!.isBefore(DateTime.now()))
-            const Text('Плановый конец прошёл. Сделайте check-out.'),
-          if (shift.rateName != null) Text('Тариф: ${shift.rateName}'),
+            const AppText('Плановый конец прошёл. Сделайте check-out.'),
+          if (shift.rateName != null) AppText('${appText(context, 'Тариф')}: ${shift.rateName}'),
           if (shift.status == ShiftStatus.completed &&
               shift.rateCentsPerHour != null)
-            Text('${_duration(shift.paidMinutes)} · '
+            AppText('${_duration(context, shift.paidMinutes)} · '
                 '${_money(shift.earnedCents, shift.currency ?? 'EUR')}'),
           if (shift.status == ShiftStatus.completed &&
               shift.rateCentsPerHour == null)
-            Text(_duration(shift.paidMinutes)),
+            AppText(_duration(context, shift.paidMinutes)),
           const SizedBox(height: 8),
           if (!inPlan) switch (shift.status) {
             ShiftStatus.planned => FilledButton.tonal(
                 onPressed: () => _arm(shift),
-                child: const Text('Предварительный check-in')),
+                child: const AppText('Предварительный check-in')),
             ShiftStatus.armed => FilledButton(
                 onPressed: () => _confirm(shift),
-                child: const Text('Подтвердить начало')),
+                child: const AppText('Подтвердить начало')),
             ShiftStatus.active => FilledButton(
                 onPressed: () => _checkOut(shift),
-                child: const Text('Check-out')),
+                child: const AppText('Check-out')),
             _ => const SizedBox.shrink(),
           },
           Wrap(spacing: 8, children: [
@@ -1186,24 +1286,24 @@ class _WorkHomeState extends State<WorkHome> {
               TextButton.icon(
                 onPressed: () => _editShift(shift),
                 icon: const Icon(Icons.edit_outlined),
-                label: const Text('Исправить'),
+                label: const AppText('Исправить'),
               ),
             if (inPlan && shift.status == ShiftStatus.planned) ...[
               TextButton.icon(
                 onPressed: () => _editShift(shift),
                 icon: const Icon(Icons.edit_calendar_outlined),
-                label: const Text('Изменить план'),
+                label: const AppText('Изменить план'),
               ),
               TextButton.icon(
                 onPressed: () => _cancelPlannedShift(shift),
                 icon: const Icon(Icons.event_busy_outlined),
-                label: const Text('Отменить'),
+                label: const AppText('Отменить'),
               ),
             ],
             TextButton.icon(
               onPressed: () => _showHistory(shift),
               icon: const Icon(Icons.history),
-              label: const Text('История'),
+              label: const AppText('История'),
             ),
           ]),
         ]),
@@ -1222,15 +1322,15 @@ class _WorkHomeState extends State<WorkHome> {
           shift.status == ShiftStatus.active);
     });
     return ListView(padding: const EdgeInsets.all(16), children: [
-      Text('Сегодня, ${_date(now)}',
+      AppText('${appText(context, 'Сегодня')}, ${_date(now)}',
           style: Theme.of(context).textTheme.headlineSmall),
       if (today.isEmpty) const Padding(
-          padding: EdgeInsets.all(16), child: Text('На сегодня нет смен.')),
+          padding: EdgeInsets.all(16), child: AppText('На сегодня нет смен.')),
       for (final shift in today) _shiftCard(shift, inToday: true),
       OutlinedButton.icon(
           onPressed: _plan,
           icon: const Icon(Icons.add),
-          label: const Text('Запланировать смену')),
+          label: const AppText('Запланировать смену')),
     ]);
   }
 
@@ -1239,15 +1339,15 @@ class _WorkHomeState extends State<WorkHome> {
         planWeek.day - planWeek.weekday + DateTime.monday);
     final sunday = DateTime(monday.year, monday.month, monday.day + 6);
     return ListView(padding: const EdgeInsets.all(16), children: [
-      Text(calendarView ? 'План на месяц' : 'План на неделю',
+      AppText(calendarView ? 'План на месяц' : 'План на неделю',
           style: Theme.of(context).textTheme.headlineSmall),
       const SizedBox(height: 8),
       SegmentedButton<bool>(
         segments: const [
           ButtonSegment(value: false, icon: Icon(Icons.view_list_outlined),
-              label: Text('Список')),
+              label: AppText('Список')),
           ButtonSegment(value: true, icon: Icon(Icons.calendar_month_outlined),
-              label: Text('Календарь')),
+              label: AppText('Календарь')),
         ],
         selected: {calendarView},
         onSelectionChanged: (selection) => _setCalendarView(selection.first),
@@ -1259,7 +1359,7 @@ class _WorkHomeState extends State<WorkHome> {
               : DateTime(monday.year, monday.month, monday.day - 7)),
           icon: const Icon(Icons.chevron_left),
         ),
-        Expanded(child: Text(calendarView
+        Expanded(child: AppText(calendarView
             ? '${_two(planWeek.month)}.${planWeek.year}'
             : '${_date(monday)} — ${_date(sunday)}',
             textAlign: TextAlign.center)),
@@ -1273,9 +1373,9 @@ class _WorkHomeState extends State<WorkHome> {
       FilledButton.icon(
         onPressed: _plan,
         icon: const Icon(Icons.add),
-        label: const Text('Добавить смену'),
+        label: const AppText('Добавить смену'),
       ),
-      const Text('После check-in перенести или отменить день через план нельзя.'),
+      const AppText('После check-in перенести или отменить день через план нельзя.'),
       if (calendarView) ...[
         PlanCalendar(
           month: planWeek,
@@ -1285,18 +1385,18 @@ class _WorkHomeState extends State<WorkHome> {
         ),
         Padding(
           padding: const EdgeInsets.only(top: 16, bottom: 4),
-          child: Text(_date(planWeek),
+          child: AppText(_date(planWeek),
               style: Theme.of(context).textTheme.titleMedium),
         ),
         if (!shifts.any((shift) => sameCalendarDay(shift.plannedStart, planWeek)))
-          const Text('На выбранный день смен нет.'),
+          const AppText('На выбранный день смен нет.'),
         for (final shift in shifts.where((item) =>
             sameCalendarDay(item.plannedStart, planWeek)))
           _shiftCard(shift, inPlan: true),
       ] else for (var offset = 0; offset < 7; offset++) ...[
         Padding(
           padding: const EdgeInsets.only(top: 16, bottom: 4),
-          child: Text(_date(DateTime(
+          child: AppText(_date(DateTime(
               monday.year, monday.month, monday.day + offset)),
               style: Theme.of(context).textTheme.titleMedium),
         ),
@@ -1315,12 +1415,12 @@ class _WorkHomeState extends State<WorkHome> {
     showAboutDialog(
       context: context,
       applicationName: 'WorkHoursApp',
-      applicationLegalese: '© 2026 Alexander. Лицензия MIT.',
+      applicationLegalese: appText(context, '© 2026 Alexander. Лицензия MIT.'),
       children: const [
         SizedBox(height: 12),
-        Text('Создатель: Alexander (u-alexander-gb).'),
+        AppText('Создатель: Alexander (u-alexander-gb).'),
         SizedBox(height: 8),
-        Text('Приложение для личного учёта рабочих смен, часов и тарифов.'),
+        AppText('Приложение для личного учёта рабочих смен, часов и тарифов.'),
         SizedBox(height: 8),
         SelectableText('github.com/u-alexander-gb/WorkHoursApp'),
       ],
@@ -1328,25 +1428,25 @@ class _WorkHomeState extends State<WorkHome> {
   }
 
   Widget _projectsPage() => ListView(padding: const EdgeInsets.all(16), children: [
-        Text('Проекты',
+        AppText('Проекты',
             style: Theme.of(context).textTheme.headlineSmall),
         FilledButton.icon(
             onPressed: _createProject,
             icon: const Icon(Icons.add),
-            label: const Text('Добавить проект')),
+            label: const AppText('Добавить проект')),
         if (projects.isEmpty) const Padding(
             padding: EdgeInsets.all(16),
-            child: Text('Создайте проект, затем добавьте его тарифы.')),
+            child: AppText('Создайте проект, затем добавьте его тарифы.')),
         for (final project in projects)
           Card(
             child: Padding(
               padding: const EdgeInsets.all(12),
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(project.name,
+                AppText(project.name,
                     style: Theme.of(context).textTheme.titleMedium),
                 SwitchListTile(
-                  title: const Text('Учитывать оплату'),
-                  subtitle: Text(project.trackPay
+                  title: const AppText('Учитывать оплату'),
+                  subtitle: AppText(project.trackPay
                       ? 'Часы и начисления по тарифу'
                       : 'Только часы, без денежных сумм'),
                   value: project.trackPay,
@@ -1356,18 +1456,18 @@ class _WorkHomeState extends State<WorkHome> {
                 if (project.trackPay) ...[
                   for (final rate in rates[project.id] ?? <WorkRate>[])
                     ListTile(
-                      title: Text(rate.name),
-                      trailing: Text('${_money(rate.centsPerHour, rate.currency)}/ч'),
+                      title: AppText(rate.name),
+                      trailing: AppText('${_money(rate.centsPerHour, rate.currency)}${appText(context, '/ч')}'),
                     ),
                   TextButton.icon(
                       onPressed: () => _createRate(project),
                       icon: const Icon(Icons.add),
-                      label: const Text('Добавить тариф')),
+                      label: const AppText('Добавить тариф')),
                 ],
                 TextButton.icon(
                   onPressed: () => _showProjectHistory(project),
                   icon: const Icon(Icons.history),
-                  label: const Text('История проекта'),
+                  label: const AppText('История проекта'),
                 ),
               ]),
             ),
@@ -1416,7 +1516,8 @@ class _WorkHomeState extends State<WorkHome> {
 
   Future<void> _exportReport(DateTimeRange range, List<WorkShift> completed) async {
     try {
-      final csv = buildReportCsv(completed);
+      final csv = buildReportCsv(completed,
+          languageCode: Localizations.localeOf(context).languageCode);
       final name = 'work-hours-${range.start.year}-${_two(range.start.month)}-'
           '${_two(range.start.day)}.csv';
       final saved = await FilePicker.saveFile(
@@ -1426,7 +1527,7 @@ class _WorkHomeState extends State<WorkHome> {
       );
       if (saved != null && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Отчёт CSV сохранён')),
+          const SnackBar(content: AppText('Отчёт CSV сохранён')),
         );
       }
     } catch (error) {
@@ -1445,14 +1546,14 @@ class _WorkHomeState extends State<WorkHome> {
       totals[currency] = (totals[currency] ?? 0) + shift.earnedCents;
     }
     return ListView(padding: const EdgeInsets.all(16), children: [
-      Text('Отчёты', style: Theme.of(context).textTheme.headlineSmall),
+      AppText('Отчёты', style: Theme.of(context).textTheme.headlineSmall),
       DropdownButton<String>(
         value: period,
         items: const [
-          DropdownMenuItem(value: 'day', child: Text('День')),
-          DropdownMenuItem(value: 'week', child: Text('Неделя')),
-          DropdownMenuItem(value: 'month', child: Text('Месяц')),
-          DropdownMenuItem(value: 'custom', child: Text('Выбранный период')),
+          DropdownMenuItem(value: 'day', child: AppText('День')),
+          DropdownMenuItem(value: 'week', child: AppText('Неделя')),
+          DropdownMenuItem(value: 'month', child: AppText('Месяц')),
+          DropdownMenuItem(value: 'custom', child: AppText('Выбранный период')),
         ],
         onChanged: (value) async {
           if (value == null) return;
@@ -1477,7 +1578,7 @@ class _WorkHomeState extends State<WorkHome> {
           IconButton(
               onPressed: () => _movePeriod(-1),
               icon: const Icon(Icons.chevron_left)),
-        Expanded(child: Text('${_date(range.start)} — '
+        Expanded(child: AppText('${_date(range.start)} — '
             '${_date(range.end.subtract(const Duration(days: 1)))}')),
         if (period != 'custom')
           IconButton(
@@ -1487,16 +1588,16 @@ class _WorkHomeState extends State<WorkHome> {
       Card(child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('Учтённое время: ${_duration(minutes)}'),
+          AppText('${appText(context, 'Учтённое время')}: ${_duration(context, minutes)}'),
           for (final total in totals.entries)
-            Text('Сумма: ${_money(total.value, total.key)}'),
-          if (completed.isEmpty) const Text('Завершённых смен нет.'),
+            AppText('${appText(context, 'Сумма')}: ${_money(total.value, total.key)}'),
+          if (completed.isEmpty) const AppText('Завершённых смен нет.'),
         ]),
       )),
       OutlinedButton.icon(
         onPressed: completed.isEmpty ? null : () => _exportReport(range, completed),
         icon: const Icon(Icons.download_outlined),
-        label: const Text('Сохранить отчёт CSV'),
+        label: const AppText('Сохранить отчёт CSV'),
       ),
       for (final shift in completed) _shiftCard(shift),
     ]);
@@ -1507,10 +1608,10 @@ class _WorkHomeState extends State<WorkHome> {
     final titles = ['Сегодня', 'План', 'Проекты', 'Отчёты'];
     return Scaffold(
       appBar: AppBar(
-        title: Text(titles[tab]),
+        title: AppText(titles[tab]),
         actions: [
           PopupMenuButton<String>(
-            tooltip: 'Меню',
+            tooltip: appText(context, 'Меню'),
             onSelected: (value) {
               if (value == 'export') {
                 _exportBackup();
@@ -1518,12 +1619,15 @@ class _WorkHomeState extends State<WorkHome> {
                 _importBackup();
               } else if (value == 'about') {
                 _showAbout();
+              } else if (value == 'language') {
+                _chooseLanguage();
               }
             },
             itemBuilder: (_) => const [
-              PopupMenuItem(value: 'export', child: Text('Сохранить копию')),
-              PopupMenuItem(value: 'import', child: Text('Восстановить копию')),
-              PopupMenuItem(value: 'about', child: Text('О приложении')),
+              PopupMenuItem(value: 'export', child: AppText('Сохранить копию')),
+              PopupMenuItem(value: 'import', child: AppText('Восстановить копию')),
+              PopupMenuItem(value: 'about', child: AppText('О приложении')),
+              PopupMenuItem(value: 'language', child: AppText('Язык приложения')),
             ],
           ),
         ],
@@ -1542,11 +1646,15 @@ class _WorkHomeState extends State<WorkHome> {
       bottomNavigationBar: NavigationBar(
         selectedIndex: tab,
         onDestinationSelected: (value) => setState(() => tab = value),
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.today_outlined), label: 'Сегодня'),
-          NavigationDestination(icon: Icon(Icons.calendar_month_outlined), label: 'План'),
-          NavigationDestination(icon: Icon(Icons.work_outline), label: 'Проекты'),
-          NavigationDestination(icon: Icon(Icons.bar_chart_outlined), label: 'Отчёты'),
+        destinations: [
+          NavigationDestination(icon: const Icon(Icons.today_outlined),
+              label: appText(context, 'Сегодня')),
+          NavigationDestination(icon: const Icon(Icons.calendar_month_outlined),
+              label: appText(context, 'План')),
+          NavigationDestination(icon: const Icon(Icons.work_outline),
+              label: appText(context, 'Проекты')),
+          NavigationDestination(icon: const Icon(Icons.bar_chart_outlined),
+              label: appText(context, 'Отчёты')),
         ],
       ),
     );

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'work_repository.dart';
+import 'app_text.dart';
 
 bool sameCalendarDay(DateTime first, DateTime second) =>
     first.year == second.year &&
@@ -44,11 +45,19 @@ class PlanCalendar extends StatelessWidget {
     final first = DateTime(month.year, month.month);
     final gridStart = DateTime(first.year, first.month,
         first.day - first.weekday + DateTime.monday);
-    const weekdays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+    final weekdays = switch (Localizations.localeOf(context).languageCode) {
+      'en' => const ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'],
+      'uk' => const ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Нд'],
+      'pl' => const ['Pn', 'Wt', 'Śr', 'Cz', 'Pt', 'So', 'Nd'],
+      'es' => const ['Lu', 'Ma', 'Mi', 'Ju', 'Vi', 'Sa', 'Do'],
+      'tr' => const ['Pt', 'Sa', 'Ça', 'Pe', 'Cu', 'Ct', 'Pa'],
+      'uz' => const ['Du', 'Se', 'Ch', 'Pa', 'Ju', 'Sh', 'Ya'],
+      _ => const ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'],
+    };
     return Column(mainAxisSize: MainAxisSize.min, children: [
       Row(children: [
         for (final weekday in weekdays)
-          Expanded(child: Center(child: Text(weekday,
+          Expanded(child: Center(child: AppText(weekday,
               style: Theme.of(context).textTheme.labelSmall))),
       ]),
       const SizedBox(height: 4),
@@ -71,7 +80,7 @@ class PlanCalendar extends StatelessWidget {
           final inMonth = day.month == month.month;
           return Semantics(
             label: '${day.day}.${day.month}.${day.year}, '
-                '${dayShifts.length} смен',
+                '${dayShifts.length} ${appText(context, 'смен')}',
             button: true,
             selected: selected,
             child: InkWell(
@@ -86,12 +95,12 @@ class PlanCalendar extends StatelessWidget {
                 ),
                 child: Column(mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                  Text('${day.day}', style: TextStyle(
+                  AppText('${day.day}', style: TextStyle(
                     color: inMonth ? null : colors.outline,
                     fontWeight: selected ? FontWeight.bold : null,
                   )),
                   if (dayShifts.isNotEmpty)
-                    Text('${dayShifts.length}',
+                    AppText('${dayShifts.length}',
                         style: Theme.of(context).textTheme.labelSmall),
                   if (dayShifts.isNotEmpty)
                     Row(mainAxisAlignment: MainAxisAlignment.center, children: [
