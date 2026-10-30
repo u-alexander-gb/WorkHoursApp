@@ -73,12 +73,14 @@ void main() {
       (tester) async {
     final now = DateTime.now();
     final start = DateTime(now.year, now.month, now.day, 10);
-    final project = (await repository.projects()).single;
-    await repository.planShift(
-      projectId: project.id,
-      start: start,
-      end: start.add(const Duration(hours: 8)),
-    );
+    await tester.runAsync(() async {
+      final project = (await repository.projects()).single;
+      await repository.planShift(
+        projectId: project.id,
+        start: start,
+        end: start.add(const Duration(hours: 8)),
+      );
+    });
     await openHome(tester);
     await tester.tap(find.byIcon(Icons.calendar_month_outlined).first);
     await tester.pumpAndSettle();
