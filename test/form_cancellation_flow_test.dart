@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences_platform_interface/in_memory_shared_preferences_async.dart';
+import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
 import 'package:work_hours_app/app.dart';
 import 'package:work_hours_app/src/work_repository.dart';
 
@@ -8,6 +10,8 @@ void main() {
   late WorkRepository repository;
 
   setUp(() async {
+    SharedPreferencesAsyncPlatform.instance =
+        InMemorySharedPreferencesAsync.empty();
     repository = await WorkRepository.openInMemory();
     await repository.addProject('Combo BV');
   });
@@ -51,7 +55,8 @@ void main() {
     await tester.tap(find.text('Отмена'));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
-    expect((await repository.projects()).length, 1);
+    final projects = await tester.runAsync(repository.projects);
+    expect(projects!.length, 1);
 
     await tester.tap(find.byIcon(Icons.calendar_month_outlined).first);
     await tester.pumpAndSettle();
@@ -60,7 +65,8 @@ void main() {
     await tester.tap(find.text('Отмена'));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
-    expect(await repository.shifts(), isEmpty);
+    final shifts = await tester.runAsync(repository.shifts);
+    expect(shifts, isEmpty);
   });
 
   testWidgets('cancel plan edit and cancellation reason after typing',
@@ -91,6 +97,7 @@ void main() {
     await tester.tap(find.text('Назад'));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
-    expect((await repository.shifts()).single.status, ShiftStatus.planned);
+    final shifts = await tester.runAsync(repository.shifts);
+    expect(shifts!.single.status, ShiftStatus.planned);
   });
 }
