@@ -7,6 +7,23 @@ String _timestamp(DateTime value) =>
     '${_two(value.day)}.${_two(value.month)}.${value.year} '
     '${_two(value.hour)}:${_two(value.minute)}';
 
+String _date(DateTime value) =>
+    '${_two(value.day)}.${_two(value.month)}.${value.year}';
+
+({String fileName, String subject, String body}) reportShareDetails(
+    DateTime start, DateTime endExclusive, String languageCode) {
+  final end = endExclusive.subtract(const Duration(days: 1));
+  final period = '${_date(start)} — ${_date(end)}';
+  final fileName = 'work-hours-${start.year}-${_two(start.month)}-'
+      '${_two(start.day)}-to-${end.year}-${_two(end.month)}-${_two(end.day)}.csv';
+  return (
+    fileName: fileName,
+    subject: '${appTextForLanguage(languageCode, 'Отчёт о рабочих часах')}: $period',
+    body: appTextForLanguage(languageCode,
+        'Отчёт о рабочих часах за выбранный период во вложении.'),
+  );
+}
+
 String _cell(Object? value) {
   final text = value?.toString() ?? '';
   if (!text.contains(RegExp(r'[;"\r\n]'))) return text;

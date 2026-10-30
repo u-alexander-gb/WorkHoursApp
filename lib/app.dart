@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:share_plus/share_plus.dart';
 
 import 'src/backup_codec.dart';
 import 'src/app_text.dart';
@@ -1528,6 +1529,27 @@ class _WorkHomeState extends State<WorkHome> {
     }
   }
 
+  Future<void> _shareReport(DateTimeRange range, List<WorkShift> completed) async {
+    try {
+      final languageCode = Localizations.localeOf(context).languageCode;
+      final csv = buildReportCsv(completed, languageCode: languageCode);
+      final details = reportShareDetails(range.start, range.end, languageCode);
+      final bytes = Uint8List.fromList([0xEF, 0xBB, 0xBF, ...utf8.encode(csv)]);
+      final box = context.findRenderObject() as RenderBox?;
+      await SharePlus.instance.share(ShareParams(
+        files: [XFile.fromData(bytes, mimeType: 'text/csv')],
+        fileNameOverrides: [details.fileName],
+        subject: details.subject,
+        text: details.body,
+        sharePositionOrigin: box == null
+            ? null
+            : box.localToGlobal(Offset.zero) & box.size,
+      ));
+    } catch (error) {
+      if (mounted) _showError(context, error);
+    }
+  }
+
   Widget _reports() {
     final range = _range();
     final completed = _completedForRange(range);
@@ -1591,6 +1613,11 @@ class _WorkHomeState extends State<WorkHome> {
         onPressed: completed.isEmpty ? null : () => _exportReport(range, completed),
         icon: const Icon(Icons.download_outlined),
         label: const AppText('Сохранить отчёт CSV'),
+      ),
+      OutlinedButton.icon(
+        onPressed: completed.isEmpty ? null : () => _shareReport(range, completed),
+        icon: const Icon(Icons.share_outlined),
+        label: const AppText('Поделиться CSV'),
       ),
       for (final shift in completed) _shiftCard(shift),
     ]);
