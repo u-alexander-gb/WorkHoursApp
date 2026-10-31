@@ -18,7 +18,8 @@ class ReminderSettings {
   DateTime when(DateTime due, ReminderTiming timing) => switch (timing) {
     ReminderTiming.atTime => due,
     ReminderTiming.hourBefore => due.subtract(const Duration(hours: 1)),
-    ReminderTiming.dayBefore => due.subtract(const Duration(days: 1)),
+    ReminderTiming.dayBefore => DateTime(
+        due.year, due.month, due.day - 1, due.hour, due.minute),
     ReminderTiming.previousEvening =>
       DateTime(due.year, due.month, due.day - 1, eveningHour),
   };
