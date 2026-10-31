@@ -38,7 +38,7 @@ String buildReportCsv(Iterable<WorkShift> shifts, {String languageCode = 'ru'}) 
     ..sort((a, b) => a.creditedStart!.compareTo(b.creditedStart!));
   final output = StringBuffer();
   output.writeln([
-    'Проект', 'Тариф', 'Начало', 'Конец', 'Перерыв, мин', 'Учтено, мин',
+    'Row ID', 'Проект', 'Тариф', 'Начало', 'Конец', 'Перерыв, мин', 'Учтено, мин',
     'Ставка за час', 'Валюта', 'Начислено',
   ].map((value) => _cell(appTextForLanguage(languageCode, value))).join(';'));
   final totals = <String, (int, int)>{};
@@ -52,6 +52,7 @@ String buildReportCsv(Iterable<WorkShift> shifts, {String languageCode = 'ru'}) 
           (current.$1 + shift.paidMinutes, current.$2 + shift.earnedCents);
     }
     final fields = [
+      shift.rowId,
       shift.projectName,
       shift.rateName,
       _timestamp(shift.creditedStart!),
@@ -68,11 +69,11 @@ String buildReportCsv(Iterable<WorkShift> shifts, {String languageCode = 'ru'}) 
     ];
     output.writeln(fields.map(_cell).join(';'));
   }
-  output.writeln([appTextForLanguage(languageCode, 'Всего часов'), '', '', '', '', totalMinutes, '', '', '']
+  output.writeln(['', appTextForLanguage(languageCode, 'Всего часов'), '', '', '', '', totalMinutes, '', '', '']
       .map(_cell).join(';'));
   for (final entry in totals.entries) {
     output.writeln([
-      appTextForLanguage(languageCode, 'Итого'), '', '', '', '', entry.value.$1, '', entry.key,
+      '', appTextForLanguage(languageCode, 'Итого'), '', '', '', '', entry.value.$1, '', entry.key,
       (entry.value.$2 / 100).toStringAsFixed(2).replaceAll('.', ','),
     ].map(_cell).join(';'));
   }

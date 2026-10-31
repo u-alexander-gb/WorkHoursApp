@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:async';
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
@@ -16,6 +15,7 @@ import 'src/plan_calendar.dart';
 import 'src/time_deviation.dart';
 import 'src/work_repository.dart';
 import 'src/reminder_service.dart';
+import 'src/reminder_settings.dart';
 import 'src/report_csv.dart';
 
 void _showError(BuildContext context, Object error) {
@@ -150,6 +150,7 @@ class WorkHoursApp extends StatefulWidget {
 class _WorkHoursAppState extends State<WorkHoursApp> {
   late final Future<WorkRepository> repository = WorkRepository.open();
   final SharedPreferencesAsync preferences = SharedPreferencesAsync();
+  ReminderSettings reminderSettings = const ReminderSettings();
   String? languageCode;
 
   @override
@@ -265,6 +266,7 @@ class _WorkHomeState extends State<WorkHome> {
     };
     _reload();
     _loadPlanView();
+    _loadReminderSettings();
     clockTimer = Timer.periodic(const Duration(minutes: 1), (_) {
       if (mounted) setState(() {});
     });
@@ -302,6 +304,44 @@ class _WorkHomeState extends State<WorkHome> {
       if (mounted) {
         _showError(context, 'Не удалось сохранить вид плана: $error');
       }
+    }
+  }
+
+  Future<void> _loadReminderSettings() async {
+    try {
+      final startTiming = await preferences.getString('reminder_start_timing');
+      final endTiming = await preferences.getString('reminder_end_timing');
+      reminderSettings = ReminderSettings(
+        startEnabled: await preferences.getBool('reminder_start_enabled') ?? true,
+        endEnabled: await preferences.getBool('reminder_end_enabled') ?? true,
+        startTiming: ReminderTiming.values.where((v) => v.name == startTiming)
+            .firstOrNull ?? ReminderTiming.atTime,
+        endTiming: ReminderTiming.values.where((v) => v.name == endTiming)
+            .firstOrNull ?? ReminderTiming.atTime,
+        eveningHour: await preferences.getInt('reminder_evening_hour') ?? 19,
+      );
+      if (mounted) setState(() {});
+      for (final shift in await widget.repository.shifts()) {
+        await _rescheduleShift(shift);
+      }
+    } catch (error) {
+      if (mounted) _showError(context, error);
+    }
+  }
+
+  Future<void> _saveReminderSettings(ReminderSettings value) async {
+    try {
+      await preferences.setBool('reminder_start_enabled', value.startEnabled);
+      await preferences.setBool('reminder_end_enabled', value.endEnabled);
+      await preferences.setString('reminder_start_timing', value.startTiming.name);
+      await preferences.setString('reminder_end_timing', value.endTiming.name);
+      await preferences.setInt('reminder_evening_hour', value.eveningHour);
+      setState(() => reminderSettings = value);
+      for (final shift in await widget.repository.shifts()) {
+        await _rescheduleShift(shift);
+      }
+    } catch (error) {
+      if (mounted) _showError(context, error);
     }
   }
 
@@ -427,7 +467,7 @@ class _WorkHomeState extends State<WorkHome> {
       }
       final restored = await widget.repository.shifts();
       for (final shift in restored) {
-        await _scheduleReminder(shift);
+        await _rescheduleShift(shift);
       }
       await _reload();
       if (mounted) {
@@ -440,29 +480,33 @@ class _WorkHomeState extends State<WorkHome> {
     }
   }
 
-  Future<ReminderResult> _scheduleReminder(WorkShift shift) async {
-    final kind = switch (shift.status) {
-      ShiftStatus.planned => ReminderKind.checkIn,
-      ShiftStatus.armed => ReminderKind.confirmStart,
-      ShiftStatus.active => ReminderKind.checkOut,
-      _ => null,
-    };
-    if (kind == null) {
-      return const ReminderResult(scheduled: false, exact: false);
+  Future<void> _rescheduleShift(WorkShift shift) async {
+    await reminders.cancel(shift.id);
+    if (shift.status == ShiftStatus.cancelled ||
+        shift.status == ShiftStatus.completed) return;
+    if (reminderSettings.startEnabled &&
+        shift.plannedStart.isAfter(DateTime.now())) {
+      await reminders.schedule(
+        shiftId: shift.id,
+        when: reminderSettings.when(shift.plannedStart, reminderSettings.startTiming),
+        projectName: shift.projectName,
+        kind: shift.status == ShiftStatus.planned
+            ? ReminderKind.checkIn : ReminderKind.start,
+        languageCode: _effectiveLanguageCode,
+      );
     }
-    final due = kind == ReminderKind.checkOut
-        ? (shift.plannedEnd ?? shift.plannedStart.add(const Duration(hours: 8)))
-        : shift.plannedStart;
-    final when = kind == ReminderKind.checkOut && !due.isAfter(DateTime.now())
-        ? DateTime.now().add(const Duration(minutes: 1))
-        : due;
-    return reminders.schedule(
-      shiftId: shift.id,
-      when: when,
-      projectName: shift.projectName,
-      kind: kind,
-      languageCode: _effectiveLanguageCode,
-    );
+    if (reminderSettings.endEnabled &&
+        shift.status != ShiftStatus.planned) {
+      final due = shift.plannedEnd ??
+          shift.plannedStart.add(const Duration(hours: 8));
+      await reminders.schedule(
+        shiftId: shift.id,
+        when: reminderSettings.when(due, reminderSettings.endTiming),
+        projectName: shift.projectName,
+        kind: ReminderKind.checkOut,
+        languageCode: _effectiveLanguageCode,
+      );
+    }
   }
 
   Future<DateTime?> _pickDateTime(DateTime initial) async {
@@ -636,23 +680,15 @@ class _WorkHomeState extends State<WorkHome> {
       await _perform(() async {
         final id = await widget.repository.planShift(
             projectId: result.$1, start: result.$2, end: result.$3);
-        final reminder = await reminders.schedule(
-          shiftId: id,
-          when: result.$2,
-          projectName: projects.singleWhere((p) => p.id == result.$1).name,
-          kind: ReminderKind.checkIn,
-          languageCode: _effectiveLanguageCode,
-        );
-        if (Platform.isAndroid && mounted && !reminder.scheduled &&
-            result.$2.isAfter(DateTime.now())) {
-          _showError(context, 'План сохранён, но напоминание о check-in не назначено');
-        }
+        final planned = (await widget.repository.shifts())
+            .singleWhere((item) => item.id == id);
+        await _rescheduleShift(planned);
       });
       if (mounted) setState(() => planWeek = result.$2);
     }
   }
 
-  Future<void> _arm(WorkShift shift) async {
+  Future<void> _checkIn(WorkShift shift) async {
     final project = projects.singleWhere((item) => item.id == shift.projectId);
     final available = rates[shift.projectId] ?? [];
     if (project.trackPay && available.isEmpty) {
@@ -678,67 +714,10 @@ class _WorkHomeState extends State<WorkHome> {
     }
     if (mounted) {
       await _perform(() async {
-        await widget.repository.armShift(shift.id, rateId);
-        await reminders.cancel(shift.id);
-        final reminder = await reminders.schedule(
-          shiftId: shift.id,
-          when: shift.plannedStart,
-          projectName: shift.projectName,
-          kind: ReminderKind.confirmStart,
-          languageCode: _effectiveLanguageCode,
-        );
-        if (Platform.isAndroid && mounted && !reminder.scheduled &&
-            shift.plannedStart.isAfter(DateTime.now())) {
-          _showError(context, 'Напоминание не назначено. Проверьте разрешения.');
-        } else if (Platform.isAndroid && mounted && reminder.scheduled && !reminder.exact) {
-          _showError(context, 'Напоминание может прийти с задержкой.');
-        }
-      });
-    }
-  }
-
-  Future<void> _confirm(WorkShift shift) async {
-    final now = DateTime.now();
-    final start = await showDialog<DateTime>(
-      context: context,
-      builder: (dialogContext) => SimpleDialog(
-        title: const AppText('Во сколько началась работа?'),
-        children: [
-          if (!shift.plannedStart.isAfter(now))
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(dialogContext, shift.plannedStart),
-              child: AppText('${appText(context, 'По плану')} — ${_time(shift.plannedStart)}'),
-            ),
-          SimpleDialogOption(
-            onPressed: () => Navigator.pop(dialogContext, now),
-            child: AppText('${appText(context, 'Сейчас')} — ${_time(now)}'),
-          ),
-          SimpleDialogOption(
-            onPressed: () async {
-              final chosen = await _pickDateTime(now);
-              if (dialogContext.mounted && chosen != null) {
-                Navigator.pop(dialogContext, chosen);
-              }
-            },
-            child: const AppText('Выбрать другое время'),
-          ),
-        ],
-      ),
-    );
-    if (start != null) {
-      final approval = await _approveDeviation(
-          startDeviation(shift.plannedStart, start));
-      if (approval == null || !mounted) return;
-      await _perform(() async {
-        await widget.repository.confirmStart(shift.id, start,
-            reason: approval);
-        await reminders.cancel(shift.id);
+        await widget.repository.checkInShift(shift.id, rateId);
         final active = (await widget.repository.shifts())
             .singleWhere((item) => item.id == shift.id);
-        final reminder = await _scheduleReminder(active);
-        if (Platform.isAndroid && mounted && !reminder.scheduled) {
-          _showError(context, 'Начало сохранено, но напоминание о check-out не назначено');
-        }
+        await _rescheduleShift(active);
       });
     }
   }
@@ -912,7 +891,8 @@ class _WorkHomeState extends State<WorkHome> {
                       .toList(),
                   onChanged: (value) => update(() => rateId = value),
                 ),
-              if (shift.status == ShiftStatus.active ||
+              if ((shift.status == ShiftStatus.active &&
+                      !creditedStart.isAfter(DateTime.now())) ||
                   shift.status == ShiftStatus.completed)
                 ListTile(
                   title: const AppText('Учтённое начало'),
@@ -992,7 +972,7 @@ class _WorkHomeState extends State<WorkHome> {
         await reminders.cancel(shift.id);
         final updated = (await widget.repository.shifts())
             .singleWhere((item) => item.id == shift.id);
-        await _scheduleReminder(updated);
+        await _rescheduleShift(updated);
       } else if (shift.status == ShiftStatus.armed) {
         await widget.repository.updateArmedShift(
           shiftId: shift.id,
@@ -1001,19 +981,16 @@ class _WorkHomeState extends State<WorkHome> {
           rateId: rateId,
           reason: reason,
         );
-        await reminders.cancel(shift.id);
-        if (plannedStart.isAfter(DateTime.now())) {
-          final result = await reminders.schedule(
-            shiftId: shift.id,
-            when: plannedStart,
-            projectName: shift.projectName,
-            kind: ReminderKind.confirmStart,
-            languageCode: _effectiveLanguageCode,
-          );
-          if (Platform.isAndroid && !result.scheduled && mounted) {
-            _showError(context, 'Время изменено, но напоминание не назначено');
-          }
+        final updated = (await widget.repository.shifts())
+            .singleWhere((item) => item.id == shift.id);
+        await _rescheduleShift(updated);
+      } else if (shift.status == ShiftStatus.active &&
+          creditedStart.isAfter(DateTime.now())) {
+        if (creditedStart != shift.creditedStart) {
+          throw StateError('Будущее начало пока нельзя исправить');
         }
+        await widget.repository.changeShiftRate(
+          shiftId: shift.id, rateId: rateId, reason: reason);
       } else {
         await widget.repository.correctWorkedShift(
           shiftId: shift.id,
@@ -1032,13 +1009,13 @@ class _WorkHomeState extends State<WorkHome> {
     final confirmed = await showFormDialogUntilClosed<bool>(
       context,
       builder: (dialogContext) => AlertDialog(
-        title: const AppText('Отменить плановую смену?'),
+        title: const AppText('Удалить плановую смену?'),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
           AppText('${shift.projectName} · ${_dateTime(shift.plannedStart)}'),
           TextField(
             controller: reasonInput,
             autofocus: true,
-            decoration: InputDecoration(labelText: appText(context, 'Причина отмены')),
+            decoration: InputDecoration(labelText: appText(context, 'Причина удаления')),
           ),
         ]),
         actions: [
@@ -1047,17 +1024,14 @@ class _WorkHomeState extends State<WorkHome> {
               child: const AppText('Назад')),
           FilledButton(
               onPressed: () => Navigator.pop(dialogContext, true),
-              child: const AppText('Отменить смену')),
+              child: const AppText('Удалить смену')),
         ],
       ),
     );
-    final reason = reasonInput.text.trim();
+    final reason = reasonInput.text.trim().isEmpty
+        ? 'Удалено пользователем' : reasonInput.text.trim();
     reasonInput.dispose();
     if (confirmed != true) return;
-    if (reason.isEmpty) {
-      if (mounted) _showError(context, 'Укажите причину отмены');
-      return;
-    }
     await _perform(() async {
       await widget.repository.cancelPlannedShift(shift.id, reason);
       await reminders.cancel(shift.id);
@@ -1185,14 +1159,24 @@ class _WorkHomeState extends State<WorkHome> {
     }
   }
 
+  Future<void> _chooseReminders() async {
+    final chosen = await showDialog<ReminderSettings>(
+      context: context,
+      builder: (_) => ReminderSettingsDialog(settings: reminderSettings),
+    );
+    if (chosen != null && mounted) await _saveReminderSettings(chosen);
+  }
+
   Widget? _shiftCountdown(WorkShift shift) {
     final now = DateTime.now();
-    final active = shift.status == ShiftStatus.active;
+    final active = shift.status == ShiftStatus.active &&
+        !(shift.creditedStart?.isAfter(now) ?? false);
     if (!active && shift.status != ShiftStatus.planned &&
         shift.status != ShiftStatus.armed) {
       return null;
     }
-    final due = active ? shift.plannedEnd : shift.plannedStart;
+    final due = active ? shift.plannedEnd :
+        (shift.creditedStart ?? shift.plannedStart);
     if (due == null) return null;
     final begin = active
         ? (shift.creditedStart ?? shift.plannedStart)
@@ -1218,9 +1202,12 @@ class _WorkHomeState extends State<WorkHome> {
 
   Widget _shiftCard(WorkShift shift, {bool inPlan = false, bool inToday = false}) {
     final countdown = inToday ? _shiftCountdown(shift) : null;
-    final status = switch (shift.status) {
+    final waiting = shift.status == ShiftStatus.active &&
+        (shift.creditedStart?.isAfter(DateTime.now()) ?? false);
+    final visualStatus = waiting ? ShiftStatus.armed : shift.status;
+    final status = waiting ? 'Check-in сделан · ожидание начала' : switch (shift.status) {
       ShiftStatus.planned => 'План',
-      ShiftStatus.armed => 'Предв. check-in',
+      ShiftStatus.armed => 'Check-in сделан · ожидание начала',
       ShiftStatus.active => 'Идёт работа',
       ShiftStatus.completed => 'Завершена',
       ShiftStatus.cancelled => 'Отменена',
@@ -1229,16 +1216,19 @@ class _WorkHomeState extends State<WorkHome> {
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          AppText(shift.projectName, style: Theme.of(context).textTheme.titleMedium),
+          AppText('№${shift.rowId} · ${shift.projectName}',
+              style: Theme.of(context).textTheme.titleMedium),
           AnimatedSwitcher(duration: const Duration(milliseconds: 250),
-            child: Row(key: ValueKey(shift.status), children: [
-            Icon(shiftStatusIcon(shift.status), size: 19,
-                color: shiftStatusColor(shift.status,
+            child: Row(key: ValueKey(visualStatus), children: [
+            Icon(shiftStatusIcon(visualStatus), size: 19,
+                color: shiftStatusColor(visualStatus,
                     Theme.of(context).colorScheme)),
             const SizedBox(width: 6),
             Expanded(child: AppText('${_dateTime(shift.plannedStart)} · ${appText(context, status)}')),
           ])),
           ?countdown,
+          if (shift.preCheckInAt != null)
+            AppText('${appText(context, 'Check-in сделан')}: ${_dateTime(shift.preCheckInAt!)}'),
           if (shift.creditedStart != null) ...[
             AppText('${appText(context, 'Учтённое начало')}: ${_dateTime(shift.creditedStart!)}'),
             if (startDeviation(shift.plannedStart, shift.creditedStart!)
@@ -1251,13 +1241,10 @@ class _WorkHomeState extends State<WorkHome> {
                 case final deviation?)
               DeviationNotice(deviation: deviation),
           ],
-          if (shift.status == ShiftStatus.armed &&
-              shift.plannedStart.isBefore(DateTime.now()))
-            const AppText('Плановое начало прошло. Подтвердите прибытие.'),
           if (shift.status == ShiftStatus.planned &&
               shift.plannedStart.isBefore(DateTime.now()))
             const AppText('Плановое начало прошло. Сделайте check-in.'),
-          if (shift.status == ShiftStatus.active &&
+          if (shift.status == ShiftStatus.active && !waiting &&
               shift.plannedEnd != null &&
               shift.plannedEnd!.isBefore(DateTime.now()))
             const AppText('Плановый конец прошёл. Сделайте check-out.'),
@@ -1272,13 +1259,11 @@ class _WorkHomeState extends State<WorkHome> {
           const SizedBox(height: 8),
           if (!inPlan) switch (shift.status) {
             ShiftStatus.planned => FilledButton.tonal(
-                onPressed: () => _arm(shift),
-                child: const AppText('Предварительный check-in')),
-            ShiftStatus.armed => FilledButton(
-                onPressed: () => _confirm(shift),
-                child: const AppText('Подтвердить начало')),
+                onPressed: () => _checkIn(shift),
+                child: const AppText('Check-in')),
+            ShiftStatus.armed => const SizedBox.shrink(),
             ShiftStatus.active => FilledButton(
-                onPressed: () => _checkOut(shift),
+                onPressed: waiting ? null : () => _checkOut(shift),
                 child: const AppText('Check-out')),
             _ => const SizedBox.shrink(),
           },
@@ -1297,8 +1282,8 @@ class _WorkHomeState extends State<WorkHome> {
               ),
               TextButton.icon(
                 onPressed: () => _cancelPlannedShift(shift),
-                icon: const Icon(Icons.event_busy_outlined),
-                label: const AppText('Отменить'),
+                icon: const Icon(Icons.delete_outline),
+                label: const AppText('Удалить'),
               ),
             ],
             TextButton.icon(
@@ -1325,8 +1310,15 @@ class _WorkHomeState extends State<WorkHome> {
     return ListView(padding: const EdgeInsets.all(16), children: [
       AppText('${appText(context, 'Сегодня')}, ${_date(now)}',
           style: Theme.of(context).textTheme.headlineSmall),
-      if (today.isEmpty) const Padding(
-          padding: EdgeInsets.all(16), child: AppText('На сегодня нет смен.')),
+      if (today.isEmpty) ...[
+        const Padding(padding: EdgeInsets.all(16),
+            child: AppText('Сегодня смен нет.')),
+        TextButton.icon(
+          onPressed: () => setState(() => tab = 1),
+          icon: const Icon(Icons.calendar_month_outlined),
+          label: const AppText('Посмотреть расписание'),
+        ),
+      ],
       for (final shift in today) _shiftCard(shift, inToday: true),
       OutlinedButton.icon(
           onPressed: _plan,
@@ -1381,7 +1373,8 @@ class _WorkHomeState extends State<WorkHome> {
         PlanCalendar(
           month: planWeek,
           selectedDay: planWeek,
-          shifts: shifts,
+          shifts: shifts.where((item) =>
+              item.status != ShiftStatus.cancelled).toList(),
           onSelectDay: (day) => setState(() => planWeek = day),
         ),
         Padding(
@@ -1389,9 +1382,11 @@ class _WorkHomeState extends State<WorkHome> {
           child: AppText(_date(planWeek),
               style: Theme.of(context).textTheme.titleMedium),
         ),
-        if (!shifts.any((shift) => sameCalendarDay(shift.plannedStart, planWeek)))
+        if (!shifts.any((shift) => shift.status != ShiftStatus.cancelled &&
+            sameCalendarDay(shift.plannedStart, planWeek)))
           const AppText('На выбранный день смен нет.'),
         for (final shift in shifts.where((item) =>
+            item.status != ShiftStatus.cancelled &&
             sameCalendarDay(item.plannedStart, planWeek)))
           _shiftCard(shift, inPlan: true),
       ] else for (var offset = 0; offset < 7; offset++) ...[
@@ -1403,12 +1398,27 @@ class _WorkHomeState extends State<WorkHome> {
         ),
         for (final shift in shifts.where((item) {
           final day = DateTime(monday.year, monday.month, monday.day + offset);
-          return item.plannedStart.year == day.year &&
+          return item.status != ShiftStatus.cancelled &&
+              item.plannedStart.year == day.year &&
               item.plannedStart.month == day.month &&
               item.plannedStart.day == day.day;
         }))
           _shiftCard(shift, inPlan: true),
       ],
+      if (shifts.any((shift) => shift.status == ShiftStatus.cancelled))
+        ExpansionTile(
+          title: const AppText('Удалённые смены и история'),
+          children: [
+            for (final shift in shifts.where((item) =>
+                item.status == ShiftStatus.cancelled))
+              ListTile(
+                title: AppText('№${shift.rowId} · ${shift.projectName}'),
+                subtitle: AppText(_dateTime(shift.plannedStart)),
+                trailing: const Icon(Icons.history),
+                onTap: () => _showHistory(shift),
+              ),
+          ],
+        ),
     ]);
   }
 
@@ -1635,6 +1645,7 @@ class _WorkHomeState extends State<WorkHome> {
             onImport: _importBackup,
             onAbout: _showAbout,
             onLanguage: _chooseLanguage,
+            onReminders: _chooseReminders,
           ),
         ],
       ),
@@ -1700,12 +1711,14 @@ class LanguagePickerDialog extends StatelessWidget {
 
 class WorkHoursMenuButton extends StatelessWidget {
   const WorkHoursMenuButton({super.key, required this.onExport,
-      required this.onImport, required this.onAbout, required this.onLanguage});
+      required this.onImport, required this.onAbout, required this.onLanguage,
+      this.onReminders});
 
   final VoidCallback onExport;
   final VoidCallback onImport;
   final VoidCallback onAbout;
   final VoidCallback onLanguage;
+  final VoidCallback? onReminders;
 
   @override
   Widget build(BuildContext context) => PopupMenuButton<String>(
@@ -1716,6 +1729,7 @@ class WorkHoursMenuButton extends StatelessWidget {
             case 'import': onImport();
             case 'about': onAbout();
             case 'language': onLanguage();
+            case 'reminders': onReminders?.call();
           }
         },
         itemBuilder: (_) => const [
@@ -1723,6 +1737,87 @@ class WorkHoursMenuButton extends StatelessWidget {
           PopupMenuItem(value: 'import', child: AppText('Восстановить копию')),
           PopupMenuItem(value: 'about', child: AppText('О приложении')),
           PopupMenuItem(value: 'language', child: AppText('Язык приложения')),
+          PopupMenuItem(value: 'reminders', child: AppText('Напоминания')),
+        ],
+      );
+}
+
+class ReminderSettingsDialog extends StatefulWidget {
+  const ReminderSettingsDialog({super.key, required this.settings});
+  final ReminderSettings settings;
+
+  @override
+  State<ReminderSettingsDialog> createState() => _ReminderSettingsDialogState();
+}
+
+class _ReminderSettingsDialogState extends State<ReminderSettingsDialog> {
+  late ReminderSettings value = widget.settings;
+
+  String _timingLabel(ReminderTiming timing) => switch (timing) {
+    ReminderTiming.atTime => 'В момент события',
+    ReminderTiming.hourBefore => 'За 1 час',
+    ReminderTiming.dayBefore => 'За 1 день',
+    ReminderTiming.previousEvening => 'Вечером накануне',
+  };
+
+  Widget _timingPicker(String label, ReminderTiming selected,
+      ValueChanged<ReminderTiming> changed) => DropdownButtonFormField<ReminderTiming>(
+        key: ValueKey(label),
+        initialValue: selected,
+        decoration: InputDecoration(labelText: appText(context, label)),
+        items: [for (final timing in ReminderTiming.values)
+          DropdownMenuItem(value: timing, child: AppText(_timingLabel(timing)))],
+        onChanged: (timing) {
+          if (timing != null) changed(timing);
+        },
+      );
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: const AppText('Напоминания'),
+        content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min,
+          children: [
+            SwitchListTile(
+              title: const AppText('О начале смены'),
+              value: value.startEnabled,
+              onChanged: (enabled) => setState(() =>
+                  value = value.copyWith(startEnabled: enabled)),
+            ),
+            if (value.startEnabled) _timingPicker('Когда напомнить о начале',
+                value.startTiming, (timing) => setState(() =>
+                    value = value.copyWith(startTiming: timing))),
+            SwitchListTile(
+              title: const AppText('Об окончании смены'),
+              value: value.endEnabled,
+              onChanged: (enabled) => setState(() =>
+                  value = value.copyWith(endEnabled: enabled)),
+            ),
+            if (value.endEnabled) _timingPicker('Когда напомнить об окончании',
+                value.endTiming, (timing) => setState(() =>
+                    value = value.copyWith(endTiming: timing))),
+            if ((value.startEnabled &&
+                    value.startTiming == ReminderTiming.previousEvening) ||
+                (value.endEnabled &&
+                    value.endTiming == ReminderTiming.previousEvening))
+              ListTile(
+                title: const AppText('Время вечером накануне'),
+                subtitle: AppText('${_two(value.eveningHour)}:00'),
+                onTap: () async {
+                  final chosen = await showTimePicker(
+                    context: context,
+                    initialTime: TimeOfDay(hour: value.eveningHour, minute: 0),
+                  );
+                  if (chosen != null && mounted) setState(() =>
+                      value = value.copyWith(eveningHour: chosen.hour));
+                },
+              ),
+          ],
+        )),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context),
+              child: const AppText('Отмена')),
+          FilledButton(onPressed: () => Navigator.pop(context, value),
+              child: const AppText('Сохранить')),
         ],
       );
 }

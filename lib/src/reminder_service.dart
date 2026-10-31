@@ -13,7 +13,7 @@ class ReminderResult {
   final bool exact;
 }
 
-enum ReminderKind { checkIn, confirmStart, checkOut }
+enum ReminderKind { checkIn, start, checkOut }
 
 class ReminderService {
   final FlutterLocalNotificationsPlugin _plugin =
@@ -59,13 +59,13 @@ class ReminderService {
       exact = await android?.canScheduleExactNotifications() ?? false;
     }
     final title = switch (kind) {
-      ReminderKind.checkIn => 'Пора сделать check-in',
-      ReminderKind.confirmStart => 'Пора подтвердить начало работы',
+      ReminderKind.checkIn => 'Напоминание о начале смены',
+      ReminderKind.start => 'Работа начинается',
       ReminderKind.checkOut => 'Пора сделать check-out',
     };
     final body = switch (kind) {
-      ReminderKind.checkIn => 'Выберите тариф и отметьте начало.',
-      ReminderKind.confirmStart => 'Вы на месте?',
+      ReminderKind.checkIn => 'Проверьте расписание и сделайте check-in.',
+      ReminderKind.start => 'Начало учёта часов по плану. Подтверждение не требуется.',
       ReminderKind.checkOut => 'Смена ещё не завершена.',
     };
     await _plugin.zonedSchedule(

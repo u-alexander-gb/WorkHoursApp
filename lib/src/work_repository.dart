@@ -37,6 +37,7 @@ class WorkRate {
 class WorkShift {
   const WorkShift({
     required this.id,
+    required this.rowId,
     required this.projectId,
     required this.projectName,
     required this.status,
@@ -55,6 +56,7 @@ class WorkShift {
   });
 
   final String id;
+  final int rowId;
   final String projectId;
   final String projectName;
   final ShiftStatus status;
@@ -135,7 +137,7 @@ class WorkRepository {
       'id', 'project_id', 'name', 'cents_per_hour', 'currency', 'archived'
     ],
     'shifts': [
-      'id', 'project_id', 'rate_id', 'status', 'planned_start_ms',
+      'id', 'row_number', 'project_id', 'rate_id', 'status', 'planned_start_ms',
       'planned_end_ms', 'pre_check_in_ms', 'confirmed_ms',
       'credited_start_ms', 'checked_out_ms', 'credited_end_ms',
       'break_minutes', 'rate_name_snapshot', 'rate_cents_snapshot',
@@ -159,7 +161,7 @@ class WorkRepository {
         '$directory${Platform.pathSeparator}work_hours.db';
     final db = await openDatabase(
       path,
-      version: 3,
+      version: 4,
       onConfigure: (db) => db.execute('PRAGMA foreign_keys = ON'),
       onCreate: _createSchema,
       onUpgrade: _upgradeSchema,
@@ -172,7 +174,7 @@ class WorkRepository {
     databaseFactory = databaseFactoryFfi;
     final db = await openDatabase(
       inMemoryDatabasePath,
-      version: 3,
+      version: 4,
       onConfigure: (db) => db.execute('PRAGMA foreign_keys = ON'),
       onCreate: _createSchema,
       onUpgrade: _upgradeSchema,
@@ -202,6 +204,7 @@ class WorkRepository {
         await db.execute('''
           CREATE TABLE shifts (
             id TEXT PRIMARY KEY,
+            row_number INTEGER NOT NULL UNIQUE,
             project_id TEXT NOT NULL REFERENCES projects(id),
             rate_id TEXT REFERENCES rates(id),
             status TEXT NOT NULL,
@@ -253,6 +256,24 @@ class WorkRepository {
         )
       ''');
     }
+    if (oldVersion < 4) {
+      final shiftTables = await db.rawQuery(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'shifts'");
+      if (shiftTables.isNotEmpty) {
+        await db.execute('ALTER TABLE shifts ADD COLUMN row_number INTEGER');
+        await db.execute('''
+          UPDATE shifts SET row_number = (
+            SELECT COUNT(*) FROM shifts older WHERE older.rowid <= shifts.rowid
+          )
+        ''');
+        await db.execute('CREATE UNIQUE INDEX shifts_row_number ON shifts(row_number)');
+        await db.execute('''
+          UPDATE shifts SET status = 'active',
+            credited_start_ms = MAX(planned_start_ms, COALESCE(pre_check_in_ms, planned_start_ms))
+          WHERE status = 'armed'
+        ''');
+      }
+    }
   }
 
   Future<void> close() => _db.close();
@@ -264,7 +285,7 @@ class WorkRepository {
     }
     return jsonEncode({
       'format': 'work-hours-backup',
-      'version': 3,
+      'version': 4,
       'createdAt': DateTime.now().toUtc().toIso8601String(),
       'tables': tables,
     });
@@ -279,7 +300,8 @@ class WorkRepository {
         decoded['format'] != 'work-hours-backup' ||
         (decoded['version'] != 1 &&
             decoded['version'] != 2 &&
-            decoded['version'] != 3) ||
+            decoded['version'] != 3 &&
+            decoded['version'] != 4) ||
         decoded['tables'] is! Map<String, dynamic> ||
         decoded['createdAt'] is! String) {
       throw const FormatException('Неверный формат резервной копии');
@@ -292,7 +314,8 @@ class WorkRepository {
     final tables = <String, List<Map<String, Object?>>>{};
     for (final entry in _backupColumns.entries) {
       final rawRows = source[entry.key];
-      if (entry.key == 'project_events' && decoded['version'] != 3 &&
+      if (entry.key == 'project_events' &&
+          (decoded['version'] == 1 || decoded['version'] == 2) &&
           rawRows == null) {
         tables[entry.key] = [];
         continue;
@@ -312,8 +335,11 @@ class WorkRepository {
         if (decoded['version'] == 1 && entry.key == 'shift_events') {
           row['details_json'] = null;
         }
-        if (decoded['version'] != 3 && entry.key == 'projects') {
-          row['track_pay'] = 1;
+        if (decoded['version'] == 1 || decoded['version'] == 2) {
+          if (entry.key == 'projects') row['track_pay'] = 1;
+        }
+        if (decoded['version'] != 4 && entry.key == 'shifts') {
+          row['row_number'] = rows.length + 1;
         }
         if (entry.key == 'shift_events' && row['details_json'] is String) {
           final details = jsonDecode(row['details_json'] as String);
@@ -345,7 +371,16 @@ class WorkRepository {
       }
       for (final table in _backupColumns.keys) {
         for (final row in tables[table]!) {
-          await tx.insert(table, row);
+          if (table == 'shifts' && row['status'] == ShiftStatus.armed.name) {
+            final planned = row['planned_start_ms'] as int;
+            final tapped = row['pre_check_in_ms'] as int? ?? planned;
+            await tx.insert(table, {...row,
+              'status': ShiftStatus.active.name,
+              'credited_start_ms': max(planned, tapped),
+            });
+          } else {
+            await tx.insert(table, row);
+          }
         }
       }
     });
@@ -474,8 +509,11 @@ class WorkRepository {
     }
     final id = _newId();
     await _db.transaction((tx) async {
+      final nextRow = Sqflite.firstIntValue(
+          await tx.rawQuery('SELECT COALESCE(MAX(row_number), 0) + 1 FROM shifts'))!;
       await tx.insert('shifts', {
         'id': id,
+        'row_number': nextRow,
         'project_id': projectId,
         'status': ShiftStatus.planned.name,
         'planned_start_ms': start.millisecondsSinceEpoch,
@@ -534,6 +572,58 @@ class WorkRepository {
           where: 'id = ?',
           whereArgs: [shiftId]);
       await _recordEvent(tx, shiftId, 'armed');
+    });
+  }
+
+  /// One check-in records the tap and credits work from the planned start
+  /// when the worker checks in early. There is no arrival confirmation.
+  Future<void> checkInShift(String shiftId, String? rateId,
+      {DateTime? checkedInAt}) async {
+    final at = checkedInAt ?? DateTime.now();
+    await _db.transaction((tx) async {
+      final shift = await _requireShift(tx, shiftId, ShiftStatus.planned);
+      final project = await tx.query('projects',
+          where: 'id = ?', whereArgs: [shift['project_id']], limit: 1);
+      final tracksPay = project.single['track_pay'] == 1;
+      if (tracksPay && rateId == null) {
+        throw StateError('Выберите тариф для проекта с учётом оплаты');
+      }
+      if (!tracksPay && rateId != null) {
+        throw StateError('В этом проекте учёт оплаты выключен');
+      }
+      final rate = rateId == null ? null
+          : await _requireRate(tx, rateId, shift['project_id'] as String);
+      final planned = DateTime.fromMillisecondsSinceEpoch(shift['planned_start_ms'] as int);
+      final start = at.isBefore(planned) ? planned : at;
+      final plannedEndMs = shift['planned_end_ms'] as int?;
+      final end = plannedEndMs == null
+          ? start.add(const Duration(hours: 8))
+          : DateTime.fromMillisecondsSinceEpoch(plannedEndMs);
+      await _assertNoWorkOverlap(tx, shiftId, start,
+          end.isAfter(start) ? end : start.add(const Duration(minutes: 1)));
+      await tx.update('shifts', {
+        'status': ShiftStatus.active.name,
+        ..._rateSnapshot(rate),
+        'pre_check_in_ms': at.millisecondsSinceEpoch,
+        'credited_start_ms': start.millisecondsSinceEpoch,
+      }, where: 'id = ?', whereArgs: [shiftId]);
+      await _recordEvent(tx, shiftId, 'checked_in', start);
+    });
+  }
+
+  Future<void> changeShiftRate({required String shiftId,
+      required String? rateId, required String reason}) async {
+    await _db.transaction((tx) async {
+      final rows = await tx.query('shifts', where: 'id = ?', whereArgs: [shiftId], limit: 1);
+      if (rows.isEmpty) throw StateError('Смена не найдена');
+      final before = rows.single;
+      if (before['status'] != ShiftStatus.active.name &&
+          before['status'] != ShiftStatus.completed.name) {
+        throw StateError('Тариф можно изменить после check-in');
+      }
+      final rate = rateId == null ? null
+          : await _requireRate(tx, rateId, before['project_id'] as String);
+      await _updateWithAudit(tx, shiftId, before, _rateSnapshot(rate), reason);
     });
   }
 
@@ -777,7 +867,8 @@ class WorkRepository {
   Future<void> _assertNoWorkOverlap(Transaction tx, String shiftId,
       DateTime start, DateTime end) async {
     final rows = await tx.rawQuery('''
-      SELECT s.credited_start_ms, s.credited_end_ms, p.name AS project_name
+      SELECT s.credited_start_ms, s.credited_end_ms, s.planned_end_ms,
+             p.name AS project_name
       FROM shifts s JOIN projects p ON p.id = s.project_id
       WHERE s.id != ? AND s.status IN (?, ?)
     ''', [shiftId, ShiftStatus.active.name, ShiftStatus.completed.name]);
@@ -787,7 +878,8 @@ class WorkRepository {
       final otherStart = row['credited_start_ms'] as int?;
       if (otherStart == null) continue;
       final otherEnd = row['credited_end_ms'] as int? ??
-          DateTime.now().millisecondsSinceEpoch;
+          max(DateTime.now().millisecondsSinceEpoch,
+              row['planned_end_ms'] as int? ?? DateTime.now().millisecondsSinceEpoch);
       if (startMs < otherEnd && otherStart < endMs) {
         final from = DateTime.fromMillisecondsSinceEpoch(otherStart);
         final to = DateTime.fromMillisecondsSinceEpoch(otherEnd);
@@ -827,6 +919,7 @@ WorkShift _shiftFromRow(Map<String, Object?> row) {
 
   return WorkShift(
     id: row['id'] as String,
+    rowId: row['row_number'] as int,
     projectId: row['project_id'] as String,
     projectName: row['project_name'] as String,
     status: ShiftStatus.values.byName(row['status'] as String),

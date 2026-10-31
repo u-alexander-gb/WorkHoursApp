@@ -30,7 +30,7 @@ void main() {
     expect(shift.rateId, isNull);
     expect(shift.earnedCents, 0);
     final csv = buildReportCsv([shift]);
-    expect(csv, contains('Всего часов;;;;;105'));
+    expect(csv, contains(';Всего часов;;;;;105'));
     expect(csv, isNot(contains('0,00;EUR')));
     await repository.restoreBackup(await repository.exportBackup());
     expect((await repository.projects()).single.trackPay, isFalse);

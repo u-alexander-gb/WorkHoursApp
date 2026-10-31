@@ -233,7 +233,7 @@ void main() {
         reason: 'Уточнил план',
       );
       expect((await repository.shiftEvents(id)).first.kind, 'corrected');
-      expect(jsonDecode(await repository.exportBackup())['version'], 3);
+      expect(jsonDecode(await repository.exportBackup())['version'], 4);
     });
   });
 

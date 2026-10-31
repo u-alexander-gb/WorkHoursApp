@@ -168,6 +168,6 @@ void main() {
 
     final csv = buildReportCsv(await repository.shifts());
     expect(csv, contains('"Combo; ""BV"""'));
-    expect(csv, contains('Итого;;;;;60;;EUR;15,00'));
+    expect(csv, contains(';Итого;;;;;60;;EUR;15,00'));
   });
 }

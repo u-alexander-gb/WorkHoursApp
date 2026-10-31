@@ -8,6 +8,7 @@ void main() {
     var selected = DateTime(2026, 10, 1);
     final shift = WorkShift(
       id: 'shift-1',
+      rowId: 1,
       projectId: 'project-1',
       projectName: 'Combo BV',
       status: ShiftStatus.planned,
