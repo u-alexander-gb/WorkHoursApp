@@ -8,6 +8,12 @@ bool sameCalendarDay(DateTime first, DateTime second) =>
     first.month == second.month &&
     first.day == second.day;
 
+ShiftStatus visibleShiftStatus(WorkShift shift, DateTime now) =>
+    shift.status == ShiftStatus.active &&
+            (shift.creditedStart?.isAfter(now) ?? false)
+        ? ShiftStatus.armed
+        : shift.status;
+
 IconData shiftStatusIcon(ShiftStatus status) => switch (status) {
       ShiftStatus.planned => Icons.event_outlined,
       ShiftStatus.armed => Icons.schedule_send_outlined,
@@ -109,7 +115,8 @@ class PlanCalendar extends StatelessWidget {
                           padding: const EdgeInsets.symmetric(horizontal: 1),
                           child: CircleAvatar(
                             radius: 2.5,
-                            backgroundColor: shiftStatusColor(shift.status, colors),
+                            backgroundColor: shiftStatusColor(
+                                visibleShiftStatus(shift, DateTime.now()), colors),
                           ),
                         ),
                     ]),

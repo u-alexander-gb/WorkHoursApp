@@ -150,7 +150,6 @@ class WorkHoursApp extends StatefulWidget {
 class _WorkHoursAppState extends State<WorkHoursApp> {
   late final Future<WorkRepository> repository = WorkRepository.open();
   final SharedPreferencesAsync preferences = SharedPreferencesAsync();
-  ReminderSettings reminderSettings = const ReminderSettings();
   String? languageCode;
 
   @override
@@ -252,6 +251,7 @@ class _WorkHomeState extends State<WorkHome> {
   DateTime planWeek = DateTime.now();
   bool calendarView = false;
   final SharedPreferencesAsync preferences = SharedPreferencesAsync();
+  ReminderSettings reminderSettings = const ReminderSettings();
   Timer? clockTimer;
   DateTimeRange? customRange;
 
@@ -483,7 +483,9 @@ class _WorkHomeState extends State<WorkHome> {
   Future<void> _rescheduleShift(WorkShift shift) async {
     await reminders.cancel(shift.id);
     if (shift.status == ShiftStatus.cancelled ||
-        shift.status == ShiftStatus.completed) return;
+        shift.status == ShiftStatus.completed) {
+      return;
+    }
     if (reminderSettings.startEnabled &&
         shift.plannedStart.isAfter(DateTime.now())) {
       await reminders.schedule(
@@ -1204,7 +1206,7 @@ class _WorkHomeState extends State<WorkHome> {
     final countdown = inToday ? _shiftCountdown(shift) : null;
     final waiting = shift.status == ShiftStatus.active &&
         (shift.creditedStart?.isAfter(DateTime.now()) ?? false);
-    final visualStatus = waiting ? ShiftStatus.armed : shift.status;
+    final visualStatus = visibleShiftStatus(shift, DateTime.now());
     final status = waiting ? 'Check-in сделан · ожидание начала' : switch (shift.status) {
       ShiftStatus.planned => 'План',
       ShiftStatus.armed => 'Check-in сделан · ожидание начала',
@@ -1807,8 +1809,10 @@ class _ReminderSettingsDialogState extends State<ReminderSettingsDialog> {
                     context: context,
                     initialTime: TimeOfDay(hour: value.eveningHour, minute: 0),
                   );
-                  if (chosen != null && mounted) setState(() =>
-                      value = value.copyWith(eveningHour: chosen.hour));
+                  if (chosen != null && mounted) {
+                    setState(() =>
+                        value = value.copyWith(eveningHour: chosen.hour));
+                  }
                 },
               ),
           ],

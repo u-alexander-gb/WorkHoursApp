@@ -509,8 +509,9 @@ class WorkRepository {
     }
     final id = _newId();
     await _db.transaction((tx) async {
-      final nextRow = Sqflite.firstIntValue(
-          await tx.rawQuery('SELECT COALESCE(MAX(row_number), 0) + 1 FROM shifts'))!;
+      final nextRowResult = await tx.rawQuery(
+          'SELECT COALESCE(MAX(row_number), 0) + 1 AS next_row FROM shifts');
+      final nextRow = nextRowResult.single['next_row'] as int;
       await tx.insert('shifts', {
         'id': id,
         'row_number': nextRow,
