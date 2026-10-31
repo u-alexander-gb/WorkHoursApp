@@ -69,7 +69,7 @@ void main() {
     expect(shifts, isEmpty);
   });
 
-  testWidgets('cancel plan edit and cancellation reason after typing',
+  testWidgets('cancel plan edit and deletion reason after typing',
       (tester) async {
     final now = DateTime.now();
     final start = DateTime(now.year, now.month, now.day, 10);
@@ -92,8 +92,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
 
-    await tester.ensureVisible(find.text('Отменить').last);
-    await tester.tap(find.text('Отменить').last);
+    await tester.ensureVisible(find.text('Удалить').last);
+    await tester.tap(find.text('Удалить').last);
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).last, 'Temporary cancellation');
     await tester.tap(find.text('Назад'));
