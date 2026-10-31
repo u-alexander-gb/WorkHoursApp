@@ -1008,6 +1008,7 @@ class _WorkHomeState extends State<WorkHome> {
 
   Future<void> _cancelPlannedShift(WorkShift shift) async {
     final reasonInput = TextEditingController();
+    final defaultReason = appText(context, 'Удалено пользователем');
     final confirmed = await showFormDialogUntilClosed<bool>(
       context,
       builder: (dialogContext) => AlertDialog(
@@ -1031,7 +1032,7 @@ class _WorkHomeState extends State<WorkHome> {
       ),
     );
     final reason = reasonInput.text.trim().isEmpty
-        ? 'Удалено пользователем' : reasonInput.text.trim();
+        ? defaultReason : reasonInput.text.trim();
     reasonInput.dispose();
     if (confirmed != true) return;
     await _perform(() async {
@@ -1055,7 +1056,7 @@ class _WorkHomeState extends State<WorkHome> {
 
   String _eventDetails(ShiftEvent event) {
     if (event.kind == 'cancelled') {
-      return '${appText(context, 'Плановая смена отменена. Причина')}: '
+      return '${appText(context, 'Плановая смена удалена. Причина')}: '
           '${event.reason ?? appText(context, 'не указана')}';
     }
     if (event.kind == 'confirmed' || event.kind == 'completed') {
