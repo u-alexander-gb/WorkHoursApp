@@ -7,6 +7,9 @@ import 'package:work_hours_app/src/reminder_settings.dart';
 import 'package:work_hours_app/src/report_csv.dart';
 import 'package:work_hours_app/src/work_repository.dart';
 
+DateTime _nowMillis() =>
+    DateTime.fromMillisecondsSinceEpoch(DateTime.now().millisecondsSinceEpoch);
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -15,7 +18,7 @@ void main() {
     try {
       await repository.addProject('Combo BV');
       final project = (await repository.projects()).single;
-      final planned = DateTime.now().subtract(const Duration(hours: 2));
+      final planned = _nowMillis().subtract(const Duration(hours: 2));
       final tapped = planned.subtract(const Duration(minutes: 30));
       final end = planned.add(const Duration(hours: 1));
       final id = await repository.planShift(
@@ -54,7 +57,7 @@ void main() {
       await repository.addRate(projectId: project.id, name: 'A', centsPerHour: 1000);
       await repository.addRate(projectId: project.id, name: 'B', centsPerHour: 1500);
       final rates = await repository.rates(project.id);
-      final planned = DateTime.now().subtract(const Duration(hours: 3));
+      final planned = _nowMillis().subtract(const Duration(hours: 3));
       final tapped = planned.add(const Duration(minutes: 30));
       final id = await repository.planShift(projectId: project.id,
           start: planned, end: planned.add(const Duration(hours: 2)));
@@ -75,7 +78,7 @@ void main() {
     try {
       await repository.addProject('Проект');
       final project = (await repository.projects()).single;
-      final start = DateTime.now().add(const Duration(days: 1));
+      final start = _nowMillis().add(const Duration(days: 1));
       final first = await repository.planShift(projectId: project.id, start: start);
       await repository.cancelPlannedShift(first, 'Выходной');
       final second = await repository.planShift(
@@ -99,7 +102,7 @@ void main() {
       await repository.addProject('Старый проект');
       final project = (await repository.projects()).single;
       final id = await repository.planShift(projectId: project.id,
-          start: DateTime.now().add(const Duration(days: 1)));
+          start: _nowMillis().add(const Duration(days: 1)));
       final old = jsonDecode(await repository.exportBackup()) as Map<String, dynamic>;
       old['version'] = 3;
       for (final row in (old['tables'] as Map<String, dynamic>)['shifts'] as List) {
@@ -136,7 +139,7 @@ void main() {
         await db.execute('CREATE TABLE shift_events (id TEXT PRIMARY KEY, shift_id TEXT NOT NULL, kind TEXT NOT NULL, recorded_ms INTEGER NOT NULL, credited_ms INTEGER, details_json TEXT)');
         await db.execute('CREATE TABLE project_events (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, recorded_ms INTEGER NOT NULL, description TEXT NOT NULL)');
       });
-      final planned = DateTime.now().add(const Duration(hours: 1));
+      final planned = _nowMillis().add(const Duration(hours: 1));
       final tapped = planned.subtract(const Duration(minutes: 30));
       await old.insert('projects', {'id': 'old-project', 'name': 'Combo BV'});
       await old.insert('shifts', {
