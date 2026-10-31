@@ -2,21 +2,21 @@
 
 ## Скачать приложение
 
-**Текущая версия: 0.2.0-beta.3** (предварительный выпуск).
+**Текущая версия: 0.2.0-beta.4** (предварительный выпуск).
 
 ### 📱 Android
 
-**[⬇️ Скачать WorkHoursApp для Android (.apk)](https://github.com/u-alexander-gb/WorkHoursApp/releases/download/v0.2.0-beta.3/WorkHoursApp-v0.2.0-beta.3-android.apk)**
+**[⬇️ Скачать WorkHoursApp для Android (.apk)](https://github.com/u-alexander-gb/WorkHoursApp/releases/download/v0.2.0-beta.4/WorkHoursApp-v0.2.0-beta.4-android.apk)**
 
-Откройте ссылку на телефоне, скачайте APK и подтвердите установку. Если Android запросит разрешение на установку из браузера, разрешите её для этого браузера. При обновлении с beta.2 удалять приложение не нужно; перед обновлением сохраните резервную копию.
+Откройте ссылку на телефоне, скачайте APK и подтвердите установку. Если Android запросит разрешение на установку из браузера, разрешите её для этого браузера. При обновлении с beta.2 или beta.3 удалять приложение не нужно: подпись сохранена. Перед обновлением рекомендуется сохранить резервную копию.
 
 ### 🖥️ Windows
 
-**[⬇️ Скачать WorkHoursApp для Windows (.zip)](https://github.com/u-alexander-gb/WorkHoursApp/releases/download/v0.2.0-beta.3/WorkHoursApp-v0.2.0-beta.3-windows.zip)**
+**[⬇️ Скачать WorkHoursApp для Windows (.zip)](https://github.com/u-alexander-gb/WorkHoursApp/releases/download/v0.2.0-beta.4/WorkHoursApp-v0.2.0-beta.4-windows.zip)**
 
 Распакуйте весь ZIP в одну папку и запустите `work_hours_app.exe`.
 
-[Все версии и описание выпусков](https://github.com/u-alexander-gb/WorkHoursApp/releases). Кнопка GitHub **Code → Download ZIP** скачивает исходный код, а не готовое приложение.
+[Все версии и описание выпусков](https://github.com/u-alexander-gb/WorkHoursApp/releases). [Контрольные суммы файлов](https://github.com/u-alexander-gb/WorkHoursApp/releases/download/v0.2.0-beta.4/SHA256SUMS.txt). Кнопка GitHub **Code → Download ZIP** скачивает исходный код, а не готовое приложение.
 
 Приложение для учёта рабочего времени на Android и Windows. Главная задача — записывать часы. Учёт оплаты и тарифы включаются отдельно для нужных проектов; без них check-in и отчёты по времени работают так же. Исходный код открыт под лицензией MIT.
 
