@@ -1246,7 +1246,7 @@ class _WorkHomeState extends State<WorkHome> {
       ShiftStatus.completed => colors.secondaryContainer,
       ShiftStatus.active => colors.tertiaryContainer,
       ShiftStatus.armed => colors.surfaceContainerHighest,
-      ShiftStatus.planned => colors.primaryContainer.withOpacity(0.55),
+      ShiftStatus.planned => colors.primaryContainer.withValues(alpha: 0.55),
       ShiftStatus.cancelled => colors.surfaceContainerHighest,
     };
     return Card(
