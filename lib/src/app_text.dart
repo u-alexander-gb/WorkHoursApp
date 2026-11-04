@@ -73,6 +73,13 @@ class AppText extends material.StatelessWidget {
 }
 
 const _messages = <String, List<String>>{
+  'GitHub project': ['GitHub project', 'GitHub проєкт', 'Projekt GitHub', 'Proyecto GitHub', 'GitHub projesi', 'GitHub loyihasi'],
+  'Check for updates': ['Check for updates', 'Перевірити оновлення', 'Sprawdź aktualizacje', 'Buscar actualizaciones', 'Güncellemeleri kontrol et', 'Yangilanishlarni tekshirish'],
+  'Update available': ['Update available', 'Доступно обновление', 'Dostępna aktualizacja', 'Actualización disponible', 'Güncelleme mevcut', 'Yangilanish mavjud'],
+  'Update': ['Update', 'Обновить', 'Aktualizuj', 'Actualizar', 'Güncelle', 'Yangilash'],
+  'Later': ['Later', 'Позже', 'Później', 'Más tarde', 'Daha sonra', 'Keyin'],
+  'You have the latest version': ['You have the latest version', 'Установлена последняя версия', 'Masz najnowszą wersję', 'Tienes la última versión', 'En son sürüm yüklü', 'Sizda eng so‘nggi versiya'],
+  'Could not check for updates': ['Could not check for updates', 'Не удалось проверить обновления', 'Nie można sprawdzić aktualizacji', 'No se pudieron comprobar las actualizaciones', 'Güncellemeler kontrol edilemedi', 'Yangilanishlarni tekshirib bo‘lmadi'],
   'Напоминания': ['Reminders', 'Нагадування', 'Przypomnienia', 'Recordatorios', 'Hatırlatıcılar', 'Eslatmalar'],
   'О начале смены': ['Shift start', 'Про початок зміни', 'O początku zmiany', 'Inicio del turno', 'Vardiya başlangıcı', 'Smena boshlanishi'],
   'Об окончании смены': ['Shift end', 'Про кінець зміни', 'O końcu zmiany', 'Fin del turno', 'Vardiya bitişi', 'Smena tugashi'],

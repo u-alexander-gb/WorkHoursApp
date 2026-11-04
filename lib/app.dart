@@ -5,9 +5,11 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'src/backup_codec.dart';
 import 'src/app_text.dart';
@@ -30,6 +32,50 @@ void _showError(BuildContext context, Object error) {
 }
 
 String _two(int number) => number.toString().padLeft(2, '0');
+const _githubProjectUrl = 'https://github.com/u-alexander-gb/WorkHoursApp';
+
+class AppUpdate {
+  const AppUpdate({required this.version, required this.releaseUrl,
+      this.androidUrl, this.windowsUrl});
+
+  final String version;
+  final String releaseUrl;
+  final String? androidUrl;
+  final String? windowsUrl;
+}
+
+bool _isNewerVersion(String latest, String installed) {
+  List<int> parts(String value) => RegExp(r'\d+')
+      .allMatches(value).take(3).map((match) => int.parse(match.group(0)!))
+      .followedBy(const [0, 0, 0]).take(3).toList();
+  final remote = parts(latest);
+  final local = parts(installed);
+  for (var index = 0; index < 3; index++) {
+    if (remote[index] != local[index]) return remote[index] > local[index];
+  }
+  return false;
+}
+
+Future<AppUpdate?> _latestUpdate(String installedVersion) async {
+  final response = await http.get(Uri.parse('$_githubProjectUrl/releases'),
+      headers: const {'Accept': 'application/vnd.github+json'});
+  if (response.statusCode != 200) return null;
+  final releases = jsonDecode(response.body) as List<dynamic>;
+  for (final raw in releases) {
+    final release = raw as Map<String, dynamic>;
+    if (release['draft'] == true) continue;
+    final tag = '${release['tag_name'] ?? ''}'.replaceFirst('v', '');
+    if (!_isNewerVersion(tag, installedVersion)) return null;
+    final assets = (release['assets'] as List<dynamic>? ?? const [])
+        .whereType<Map<String, dynamic>>();
+    String? assetUrl(String name) => assets
+        .firstWhere((asset) => '${asset['name']}'.toLowerCase().contains(name),
+            orElse: () => <String, dynamic>{})['browser_download_url'] as String?;
+    return AppUpdate(version: tag, releaseUrl: '${release['html_url']}',
+        androidUrl: assetUrl('android.apk'), windowsUrl: assetUrl('windows.zip'));
+  }
+  return null;
+}
 String _date(DateTime date) => '${_two(date.day)}.${_two(date.month)}.${date.year}';
 String _time(DateTime date) => '${_two(date.hour)}:${_two(date.minute)}';
 String _dateTime(DateTime date) => '${_date(date)} ${_time(date)}';
@@ -278,8 +324,56 @@ class _WorkHomeState extends State<WorkHome> {
     try {
       final info = await PackageInfo.fromPlatform();
       if (mounted) setState(() => packageInfo = info);
+      await _checkForUpdates(info: info, silent: true);
     } catch (_) {
       // The rest of the app remains usable if package metadata is unavailable.
+    }
+  }
+
+  Future<void> _checkForUpdates({PackageInfo? info, bool silent = false}) async {
+    final current = info ?? packageInfo;
+    if (current == null) return;
+    try {
+      final update = await _latestUpdate(current.version);
+      if (!mounted) return;
+      if (update == null) {
+        if (!silent) {
+          ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: AppText('You have the latest version')));
+        }
+        return;
+      }
+      final dismissed = await preferences.getString('dismissed_update');
+      if (!silent || dismissed != update.version) await _showUpdateDialog(update);
+    } catch (_) {
+      if (!silent && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: AppText('Could not check for updates')));
+      }
+    }
+  }
+
+  Future<void> _showUpdateDialog(AppUpdate update) async {
+    final target = Theme.of(context).platform == TargetPlatform.android
+        ? update.androidUrl ?? update.releaseUrl
+        : update.windowsUrl ?? update.releaseUrl;
+    final action = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const AppText('Update available'),
+        content: Text('A new WorkHoursApp version is available: ${update.version}'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, 'later'),
+              child: const AppText('Later')),
+          FilledButton(onPressed: () => Navigator.pop(context, 'open'),
+              child: const AppText('Update')),
+        ],
+      ),
+    );
+    if (action == 'later') {
+      await preferences.setString('dismissed_update', update.version);
+    } else if (action == 'open') {
+      await launchUrl(Uri.parse(target), mode: LaunchMode.externalApplication);
     }
   }
 
@@ -1474,7 +1568,11 @@ class _WorkHomeState extends State<WorkHome> {
   void _showAbout() {
     showDialog<void>(
       context: context,
-      builder: (_) => WorkHoursAboutDialog(version: packageInfo == null
+      builder: (_) => WorkHoursAboutDialog(
+          onCheckUpdates: () => _checkForUpdates(),
+          onOpenGitHub: () => launchUrl(Uri.parse(_githubProjectUrl),
+              mode: LaunchMode.externalApplication),
+          version: packageInfo == null
           ? '—'
           : '${packageInfo!.version}+${packageInfo!.buildNumber}'),
     );
@@ -1906,9 +2004,12 @@ class _ReminderSettingsDialogState extends State<ReminderSettingsDialog> {
 }
 
 class WorkHoursAboutDialog extends StatelessWidget {
-  const WorkHoursAboutDialog({super.key, required this.version});
+  const WorkHoursAboutDialog({super.key, required this.version,
+      this.onCheckUpdates, this.onOpenGitHub});
 
   final String version;
+  final VoidCallback? onCheckUpdates;
+  final VoidCallback? onOpenGitHub;
 
   @override
   Widget build(BuildContext context) => AlertDialog(
@@ -1923,9 +2024,12 @@ class WorkHoursAboutDialog extends StatelessWidget {
           const SizedBox(height: 8),
           const AppText('Приложение для личного учёта рабочих смен, часов и тарифов.'),
           const SizedBox(height: 8),
-          const SelectableText('github.com/u-alexander-gb/WorkHoursApp'),
+          TextButton.icon(onPressed: onOpenGitHub, icon: const Icon(Icons.open_in_new),
+              label: const AppText('GitHub project')),
         ]),
         actions: [
+          TextButton.icon(onPressed: onCheckUpdates, icon: const Icon(Icons.system_update),
+              label: const AppText('Check for updates')),
           TextButton(onPressed: () => Navigator.pop(context),
               child: const AppText('Закрыть')),
         ],
