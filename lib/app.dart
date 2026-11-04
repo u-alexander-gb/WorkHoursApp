@@ -250,6 +250,7 @@ class _WorkHomeState extends State<WorkHome> {
   DateTime anchor = DateTime.now();
   DateTime planWeek = DateTime.now();
   bool calendarView = false;
+  int weekStart = DateTime.monday;
   final SharedPreferencesAsync preferences = SharedPreferencesAsync();
   ReminderSettings reminderSettings = const ReminderSettings();
   Timer? clockTimer;
@@ -266,6 +267,7 @@ class _WorkHomeState extends State<WorkHome> {
     };
     _reload();
     _loadPlanView();
+    _loadWeekStart();
     _loadReminderSettings();
     clockTimer = Timer.periodic(const Duration(minutes: 1), (_) {
       if (mounted) setState(() {});
@@ -304,6 +306,31 @@ class _WorkHomeState extends State<WorkHome> {
       if (mounted) {
         _showError(context, 'Не удалось сохранить вид плана: $error');
       }
+    }
+  }
+
+  Future<void> _loadWeekStart() async {
+    try {
+      final saved = await preferences.getInt('week_start');
+      if (mounted && saved != null && saved >= DateTime.monday && saved <= DateTime.sunday) {
+        setState(() => weekStart = saved);
+      }
+    } catch (_) {
+      // Monday remains the default when preferences are unavailable.
+    }
+  }
+
+  Future<void> _chooseWeekStart() async {
+    final selected = await showDialog<int>(
+      context: context,
+      builder: (_) => WeekStartDialog(selected: weekStart),
+    );
+    if (selected == null || !mounted) return;
+    setState(() => weekStart = selected);
+    try {
+      await preferences.setInt('week_start', selected);
+    } catch (error) {
+      if (mounted) _showError(context, error);
     }
   }
 
@@ -619,8 +646,7 @@ class _WorkHomeState extends State<WorkHome> {
     }
     final now = DateTime.now();
     var projectId = projects.first.id;
-    final monday = DateTime(planWeek.year, planWeek.month,
-        planWeek.day - planWeek.weekday + DateTime.monday);
+    final monday = _weekStartDate(planWeek);
     var start = monday.isAfter(now)
         ? DateTime(monday.year, monday.month, monday.day, 10)
         : DateTime(now.year, now.month, now.day + 1, 10);
@@ -629,7 +655,7 @@ class _WorkHomeState extends State<WorkHome> {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, update) => AlertDialog(
-          title: const AppText('Запланировать смену'),
+          title: const AppText('Добавить смену'),
           content: Column(mainAxisSize: MainAxisSize.min, children: [
             DropdownButtonFormField<String>(
               initialValue: projectId,
@@ -1215,11 +1241,20 @@ class _WorkHomeState extends State<WorkHome> {
       ShiftStatus.completed => 'Завершена',
       ShiftStatus.cancelled => 'Отменена',
     };
+    final colors = Theme.of(context).colorScheme;
+    final background = switch (visualStatus) {
+      ShiftStatus.completed => colors.secondaryContainer,
+      ShiftStatus.active => colors.tertiaryContainer,
+      ShiftStatus.armed => colors.surfaceContainerHighest,
+      ShiftStatus.planned => colors.primaryContainer.withOpacity(0.55),
+      ShiftStatus.cancelled => colors.surfaceContainerHighest,
+    };
     return Card(
+      color: background,
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          AppText('№${shift.rowId} · ${shift.projectName}',
+          AppText(shift.projectName,
               style: Theme.of(context).textTheme.titleMedium),
           AnimatedSwitcher(duration: const Duration(milliseconds: 250),
             child: Row(key: ValueKey(visualStatus), children: [
@@ -1323,16 +1358,39 @@ class _WorkHomeState extends State<WorkHome> {
         ),
       ],
       for (final shift in today) _shiftCard(shift, inToday: true),
-      OutlinedButton.icon(
-          onPressed: _plan,
-          icon: const Icon(Icons.add),
-          label: const AppText('Запланировать смену')),
     ]);
   }
 
+  DateTime _weekStartDate(DateTime date) => DateTime(date.year, date.month,
+      date.day - ((date.weekday - weekStart + 7) % 7));
+
+  Widget _planDaySection(DateTime day) {
+    final dayShifts = shifts.where((item) =>
+        item.status != ShiftStatus.cancelled &&
+        sameCalendarDay(item.plannedStart, day)).toList();
+    final colors = Theme.of(context).colorScheme;
+    return Container(
+      margin: const EdgeInsets.only(top: 12),
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: dayShifts.isEmpty ? colors.surfaceContainerHighest : null,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        AppText(_date(day), style: Theme.of(context).textTheme.titleMedium),
+        if (dayShifts.isEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: AppText('Нет смен', style: TextStyle(color: colors.outline)),
+          )
+        else
+          for (final shift in dayShifts) _shiftCard(shift, inPlan: true),
+      ]),
+    );
+  }
+
   Widget _planPage() {
-    final monday = DateTime(planWeek.year, planWeek.month,
-        planWeek.day - planWeek.weekday + DateTime.monday);
+    final monday = _weekStartDate(planWeek);
     final sunday = DateTime(monday.year, monday.month, monday.day + 6);
     return ListView(padding: const EdgeInsets.all(16), children: [
       AppText(calendarView ? 'План на месяц' : 'План на неделю',
@@ -1379,6 +1437,7 @@ class _WorkHomeState extends State<WorkHome> {
           shifts: shifts.where((item) =>
               item.status != ShiftStatus.cancelled).toList(),
           onSelectDay: (day) => setState(() => planWeek = day),
+          weekStart: weekStart,
         ),
         Padding(
           padding: const EdgeInsets.only(top: 16, bottom: 4),
@@ -1392,22 +1451,9 @@ class _WorkHomeState extends State<WorkHome> {
             item.status != ShiftStatus.cancelled &&
             sameCalendarDay(item.plannedStart, planWeek)))
           _shiftCard(shift, inPlan: true),
-      ] else for (var offset = 0; offset < 7; offset++) ...[
-        Padding(
-          padding: const EdgeInsets.only(top: 16, bottom: 4),
-          child: AppText(_date(DateTime(
-              monday.year, monday.month, monday.day + offset)),
-              style: Theme.of(context).textTheme.titleMedium),
-        ),
-        for (final shift in shifts.where((item) {
-          final day = DateTime(monday.year, monday.month, monday.day + offset);
-          return item.status != ShiftStatus.cancelled &&
-              item.plannedStart.year == day.year &&
-              item.plannedStart.month == day.month &&
-              item.plannedStart.day == day.day;
-        }))
-          _shiftCard(shift, inPlan: true),
-      ],
+      ] else
+        for (var offset = 0; offset < 7; offset++)
+          _planDaySection(DateTime(monday.year, monday.month, monday.day + offset)),
       if (shifts.any((shift) => shift.status == ShiftStatus.cancelled))
         ExpansionTile(
           title: const AppText('Удалённые смены и история'),
@@ -1415,7 +1461,7 @@ class _WorkHomeState extends State<WorkHome> {
             for (final shift in shifts.where((item) =>
                 item.status == ShiftStatus.cancelled))
               ListTile(
-                title: AppText('№${shift.rowId} · ${shift.projectName}'),
+                title: AppText(shift.projectName),
                 subtitle: AppText(_dateTime(shift.plannedStart)),
                 trailing: const Icon(Icons.history),
                 onTap: () => _showHistory(shift),
@@ -1498,8 +1544,7 @@ class _WorkHomeState extends State<WorkHome> {
           start: DateTime(anchor.year, anchor.month),
           end: DateTime(anchor.year, anchor.month + 1));
     }
-    final monday = DateTime(anchor.year, anchor.month,
-        anchor.day - anchor.weekday + 1);
+    final monday = _weekStartDate(anchor);
     return DateTimeRange(
         start: monday,
         end: DateTime(monday.year, monday.month, monday.day + 7));
@@ -1649,6 +1694,7 @@ class _WorkHomeState extends State<WorkHome> {
             onAbout: _showAbout,
             onLanguage: _chooseLanguage,
             onReminders: _chooseReminders,
+            onWeekStart: _chooseWeekStart,
           ),
         ],
       ),
@@ -1715,13 +1761,14 @@ class LanguagePickerDialog extends StatelessWidget {
 class WorkHoursMenuButton extends StatelessWidget {
   const WorkHoursMenuButton({super.key, required this.onExport,
       required this.onImport, required this.onAbout, required this.onLanguage,
-      this.onReminders});
+      this.onReminders, this.onWeekStart});
 
   final VoidCallback onExport;
   final VoidCallback onImport;
   final VoidCallback onAbout;
   final VoidCallback onLanguage;
   final VoidCallback? onReminders;
+  final VoidCallback? onWeekStart;
 
   @override
   Widget build(BuildContext context) => PopupMenuButton<String>(
@@ -1733,6 +1780,7 @@ class WorkHoursMenuButton extends StatelessWidget {
             case 'about': onAbout();
             case 'language': onLanguage();
             case 'reminders': onReminders?.call();
+            case 'week_start': onWeekStart?.call();
           }
         },
         itemBuilder: (_) => const [
@@ -1741,7 +1789,33 @@ class WorkHoursMenuButton extends StatelessWidget {
           PopupMenuItem(value: 'about', child: AppText('О приложении')),
           PopupMenuItem(value: 'language', child: AppText('Язык приложения')),
           PopupMenuItem(value: 'reminders', child: AppText('Напоминания')),
+          PopupMenuItem(value: 'week_start', child: AppText('Начало недели')),
         ],
+      );
+}
+
+class WeekStartDialog extends StatelessWidget {
+  const WeekStartDialog({super.key, required this.selected});
+
+  final int selected;
+
+  static const names = [
+    'Понедельник', 'Вторник', 'Среда', 'Четверг',
+    'Пятница', 'Суббота', 'Воскресенье',
+  ];
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: const AppText('Начало недели'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          for (var index = 0; index < names.length; index++)
+            RadioListTile<int>(
+              title: AppText(names[index]),
+              value: index + 1,
+              groupValue: selected,
+              onChanged: (value) => Navigator.pop(context, value),
+            ),
+        ]),
       );
 }
 

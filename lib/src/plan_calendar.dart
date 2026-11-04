@@ -38,20 +38,22 @@ class PlanCalendar extends StatelessWidget {
     required this.selectedDay,
     required this.shifts,
     required this.onSelectDay,
+    this.weekStart = DateTime.monday,
   });
 
   final DateTime month;
   final DateTime selectedDay;
   final List<WorkShift> shifts;
   final ValueChanged<DateTime> onSelectDay;
+  final int weekStart;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final first = DateTime(month.year, month.month);
     final gridStart = DateTime(first.year, first.month,
-        first.day - first.weekday + DateTime.monday);
-    final weekdays = switch (Localizations.localeOf(context).languageCode) {
+        first.day - ((first.weekday - weekStart + 7) % 7));
+    final mondayWeekdays = switch (Localizations.localeOf(context).languageCode) {
       'en' => const ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'],
       'uk' => const ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Нд'],
       'pl' => const ['Pn', 'Wt', 'Śr', 'Cz', 'Pt', 'So', 'Nd'],
@@ -60,6 +62,10 @@ class PlanCalendar extends StatelessWidget {
       'uz' => const ['Du', 'Se', 'Ch', 'Pa', 'Ju', 'Sh', 'Ya'],
       _ => const ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'],
     };
+    final weekdays = [
+      ...mondayWeekdays.skip(weekStart - DateTime.monday),
+      ...mondayWeekdays.take(weekStart - DateTime.monday),
+    ];
     return Column(mainAxisSize: MainAxisSize.min, children: [
       Row(children: [
         for (final weekday in weekdays)
