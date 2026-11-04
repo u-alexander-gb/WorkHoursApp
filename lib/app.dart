@@ -51,7 +51,9 @@ bool _isNewerVersion(String latest, String installed) {
   final remote = parts(latest);
   final local = parts(installed);
   for (var index = 0; index < 3; index++) {
-    if (remote[index] != local[index]) return remote[index] > local[index];
+    if (remote[index] != local[index]) {
+      return remote[index] > local[index];
+    }
   }
   return false;
 }
@@ -59,13 +61,17 @@ bool _isNewerVersion(String latest, String installed) {
 Future<AppUpdate?> _latestUpdate(String installedVersion) async {
   final response = await http.get(Uri.parse('$_githubProjectUrl/releases'),
       headers: const {'Accept': 'application/vnd.github+json'});
-  if (response.statusCode != 200) return null;
+  if (response.statusCode != 200) {
+    return null;
+  }
   final releases = jsonDecode(response.body) as List<dynamic>;
   for (final raw in releases) {
     final release = raw as Map<String, dynamic>;
     if (release['draft'] == true) continue;
     final tag = '${release['tag_name'] ?? ''}'.replaceFirst('v', '');
-    if (!_isNewerVersion(tag, installedVersion)) return null;
+    if (!_isNewerVersion(tag, installedVersion)) {
+      return null;
+    }
     final assets = (release['assets'] as List<dynamic>? ?? const [])
         .whereType<Map<String, dynamic>>();
     String? assetUrl(String name) => assets
@@ -332,10 +338,14 @@ class _WorkHomeState extends State<WorkHome> {
 
   Future<void> _checkForUpdates({PackageInfo? info, bool silent = false}) async {
     final current = info ?? packageInfo;
-    if (current == null) return;
+    if (current == null) {
+      return;
+    }
     try {
       final update = await _latestUpdate(current.version);
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
       if (update == null) {
         if (!silent) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -344,7 +354,9 @@ class _WorkHomeState extends State<WorkHome> {
         return;
       }
       final dismissed = await preferences.getString('dismissed_update');
-      if (!silent || dismissed != update.version) await _showUpdateDialog(update);
+      if (!silent || dismissed != update.version) {
+        await _showUpdateDialog(update);
+      }
     } catch (_) {
       if (!silent && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -386,7 +398,9 @@ class _WorkHomeState extends State<WorkHome> {
   Future<void> _loadPlanView() async {
     try {
       final saved = await preferences.getBool('plan_calendar_view');
-      if (mounted && saved != null) setState(() => calendarView = saved);
+      if (mounted && saved != null) {
+        setState(() => calendarView = saved);
+      }
     } catch (_) {
       // The list view remains usable if platform preferences are unavailable.
     }
