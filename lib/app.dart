@@ -1807,15 +1807,19 @@ class WeekStartDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) => AlertDialog(
         title: const AppText('Начало недели'),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          for (var index = 0; index < names.length; index++)
-            RadioListTile<int>(
-              title: AppText(names[index]),
-              value: index + 1,
-              groupValue: selected,
-              onChanged: (value) => Navigator.pop(context, value),
-            ),
-        ]),
+        content: RadioGroup<int>(
+          groupValue: selected,
+          onChanged: (value) {
+            if (value != null) Navigator.pop(context, value);
+          },
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            for (var index = 0; index < names.length; index++)
+              RadioListTile<int>(
+                title: AppText(names[index]),
+                value: index + 1,
+              ),
+          ]),
+        ),
       );
 }
 
