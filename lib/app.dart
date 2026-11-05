@@ -33,6 +33,8 @@ void _showError(BuildContext context, Object error) {
 
 String _two(int number) => number.toString().padLeft(2, '0');
 const _githubProjectUrl = 'https://github.com/u-alexander-gb/WorkHoursApp';
+const _githubReleasesApiUrl =
+    'https://api.github.com/repos/u-alexander-gb/WorkHoursApp/releases';
 
 class AppUpdate {
   const AppUpdate({required this.version, required this.releaseUrl,
@@ -59,8 +61,13 @@ bool _isNewerVersion(String latest, String installed) {
 }
 
 Future<AppUpdate?> _latestUpdate(String installedVersion) async {
-  final response = await http.get(Uri.parse('$_githubProjectUrl/releases'),
-      headers: const {'Accept': 'application/vnd.github+json'});
+  final response = await http
+      .get(Uri.parse(_githubReleasesApiUrl),
+          headers: const {
+            'Accept': 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2022-11-28',
+          })
+      .timeout(const Duration(seconds: 10));
   if (response.statusCode != 200) {
     return null;
   }
