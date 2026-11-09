@@ -13,6 +13,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'src/backup_codec.dart';
 import 'src/app_text.dart';
+import 'src/app_version.dart';
 import 'src/plan_calendar.dart';
 import 'src/time_deviation.dart';
 import 'src/work_repository.dart';
@@ -47,48 +48,55 @@ class AppUpdate {
   final String? windowsUrl;
 }
 
-bool _isNewerVersion(String latest, String installed) {
-  List<int> parts(String value) => RegExp(r'\d+')
-      .allMatches(value).take(3).map((match) => int.parse(match.group(0)!))
-      .followedBy(const [0, 0, 0]).take(3).toList();
-  final remote = parts(latest);
-  final local = parts(installed);
-  for (var index = 0; index < 3; index++) {
-    if (remote[index] != local[index]) {
-      return remote[index] > local[index];
-    }
-  }
-  return false;
-}
-
 Future<AppUpdate?> _latestUpdate(String installedVersion) async {
   final response = await http
-      .get(Uri.parse(_githubReleasesApiUrl),
-          headers: const {
+      .get(Uri.parse('$_githubReleasesApiUrl?per_page=20'),
+          headers: {
             'Accept': 'application/vnd.github+json',
             'X-GitHub-Api-Version': '2022-11-28',
+            'User-Agent': 'WorkHoursApp/$installedVersion',
           })
       .timeout(const Duration(seconds: 10));
   if (response.statusCode != 200) {
-    return null;
+    throw StateError('GitHub releases request failed (${response.statusCode})');
   }
-  final releases = jsonDecode(response.body) as List<dynamic>;
+  final decoded = jsonDecode(response.body);
+  if (decoded is! List<dynamic>) {
+    throw const FormatException('GitHub releases response is not a list');
+  }
+  final releases = decoded;
+  AppUpdate? newest;
   for (final raw in releases) {
-    final release = raw as Map<String, dynamic>;
+    if (raw is! Map<String, dynamic>) continue;
+    final release = raw;
     if (release['draft'] == true) continue;
-    final tag = '${release['tag_name'] ?? ''}'.replaceFirst('v', '');
-    if (!_isNewerVersion(tag, installedVersion)) {
+    final tagValue = release['tag_name'];
+    if (tagValue is! String) continue;
+    final tag = tagValue;
+    if (!isNewerAppVersion(tag, installedVersion)) continue;
+    if (newest != null && !isNewerAppVersion(tag, newest.version)) continue;
+    final rawAssets = release['assets'];
+    final assets = rawAssets is List<dynamic>
+        ? rawAssets.whereType<Map<String, dynamic>>()
+        : const <Map<String, dynamic>>[];
+    String? assetUrl(String name) {
+      for (final asset in assets) {
+        final assetName = asset['name'];
+        final downloadUrl = asset['browser_download_url'];
+        if (assetName is String &&
+            assetName.toLowerCase().contains(name) &&
+            downloadUrl is String) {
+          return downloadUrl;
+        }
+      }
       return null;
     }
-    final assets = (release['assets'] as List<dynamic>? ?? const [])
-        .whereType<Map<String, dynamic>>();
-    String? assetUrl(String name) => assets
-        .firstWhere((asset) => '${asset['name']}'.toLowerCase().contains(name),
-            orElse: () => <String, dynamic>{})['browser_download_url'] as String?;
-    return AppUpdate(version: tag, releaseUrl: '${release['html_url']}',
+    final releaseUrl = release['html_url'];
+    if (releaseUrl is! String || releaseUrl.isEmpty) continue;
+    newest = AppUpdate(version: tag, releaseUrl: releaseUrl,
         androidUrl: assetUrl('android.apk'), windowsUrl: assetUrl('windows.zip'));
   }
-  return null;
+  return newest;
 }
 String _date(DateTime date) => '${_two(date.day)}.${_two(date.month)}.${date.year}';
 String _time(DateTime date) => '${_two(date.hour)}:${_two(date.minute)}';
@@ -366,7 +374,9 @@ class _WorkHomeState extends State<WorkHome> {
       if (!silent || dismissed != update.version) {
         await _showUpdateDialog(update);
       }
-    } catch (_) {
+    } catch (error, stackTrace) {
+      debugPrint('Update check failed: $error');
+      debugPrintStack(stackTrace: stackTrace);
       if (!silent && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: AppText('Could not check for updates')));
