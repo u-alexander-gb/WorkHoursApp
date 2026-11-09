@@ -48,6 +48,7 @@ class ReminderService implements ReminderPort {
     );
   }
 
+  @override
   Future<ReminderResult> schedule({
     required String shiftId,
     required DateTime when,
@@ -113,6 +114,7 @@ class ReminderService implements ReminderPort {
     return ReminderResult(scheduled: true, exact: exact);
   }
 
+  @override
   Future<void> cancel(String shiftId) async {
     if (!Platform.isAndroid) return;
     await initialize();
