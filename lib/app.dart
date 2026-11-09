@@ -13,6 +13,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'src/backup_codec.dart';
 import 'src/app_text.dart';
+import 'src/app_update.dart';
 import 'src/app_version.dart';
 import 'src/plan_calendar.dart';
 import 'src/time_deviation.dart';
@@ -37,18 +38,60 @@ String _two(int number) => number.toString().padLeft(2, '0');
 const _githubProjectUrl = 'https://github.com/u-alexander-gb/WorkHoursApp';
 const _githubReleasesApiUrl =
     'https://api.github.com/repos/u-alexander-gb/WorkHoursApp/releases';
+const _githubUpdateManifestUrl =
+    'https://raw.githubusercontent.com/u-alexander-gb/WorkHoursApp/main/update.json';
 
-class AppUpdate {
-  const AppUpdate({required this.version, required this.releaseUrl,
-      this.androidUrl, this.windowsUrl});
-
-  final String version;
-  final String releaseUrl;
-  final String? androidUrl;
-  final String? windowsUrl;
+String _updateErrorMessage(Object error) {
+  final details = '$error';
+  if (error is TimeoutException) {
+    return 'Update check timed out. Check your internet connection.';
+  }
+  if (error is http.ClientException || details.contains('SocketException')) {
+    return 'Cannot connect to update servers. Check your internet connection.';
+  }
+  if (details.contains('HTTP 403') || details.contains('HTTP 429')) {
+    return 'Update server temporarily refused the request. Try again later.';
+  }
+  if (error is FormatException) {
+    return 'Update server returned invalid data.';
+  }
+  return 'Could not check for updates: $details';
 }
 
 Future<AppUpdate?> _latestUpdate(String installedVersion) async {
+  Object? apiError;
+  try {
+    return await _latestUpdateFromManifest(installedVersion);
+  } catch (error, stackTrace) {
+    apiError = error;
+    debugPrint('Update manifest check failed: $error');
+    debugPrintStack(stackTrace: stackTrace);
+  }
+  try {
+    return await _latestUpdateFromApi(installedVersion);
+  } catch (error, stackTrace) {
+    debugPrint('GitHub API update check failed: $error');
+    debugPrintStack(stackTrace: stackTrace);
+    throw StateError('Update sources failed: $apiError; $error');
+  }
+}
+
+Future<AppUpdate?> _latestUpdateFromManifest(String installedVersion) async {
+  final response = await http
+      .get(Uri.parse('$_githubUpdateManifestUrl?ts=${DateTime.now().millisecondsSinceEpoch}'),
+          headers: {
+            'Accept': 'application/json',
+            'User-Agent': 'WorkHoursApp/$installedVersion',
+          })
+      .timeout(const Duration(seconds: 10));
+  if (response.statusCode != 200) {
+    throw StateError(
+        'Update manifest server returned HTTP ${response.statusCode}');
+  }
+  return parseUpdateManifest(jsonDecode(response.body), installedVersion);
+}
+
+Future<AppUpdate?> _latestUpdateFromApi(String installedVersion) async {
   final response = await http
       .get(Uri.parse('$_githubReleasesApiUrl?per_page=20'),
           headers: {
@@ -58,7 +101,8 @@ Future<AppUpdate?> _latestUpdate(String installedVersion) async {
           })
       .timeout(const Duration(seconds: 10));
   if (response.statusCode != 200) {
-    throw StateError('GitHub releases request failed (${response.statusCode})');
+    throw StateError(
+        'GitHub releases server returned HTTP ${response.statusCode}');
   }
   final decoded = jsonDecode(response.body);
   if (decoded is! List<dynamic>) {
@@ -379,7 +423,7 @@ class _WorkHomeState extends State<WorkHome> {
       debugPrintStack(stackTrace: stackTrace);
       if (!silent && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: AppText('Could not check for updates')));
+            SnackBar(content: Text(_updateErrorMessage(error))));
       }
     }
   }
