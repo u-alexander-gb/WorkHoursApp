@@ -404,6 +404,8 @@ class _WorkHomeState extends State<WorkHome> {
     }
     try {
       final update = await _latestUpdate(current.version);
+      await _saveUpdateDiagnostic(
+          'SUCCESS\ninstalled=${current.version}\nupdate=${update?.version ?? 'none'}');
       if (!mounted) {
         return;
       }
@@ -421,10 +423,45 @@ class _WorkHomeState extends State<WorkHome> {
     } catch (error, stackTrace) {
       debugPrint('Update check failed: $error');
       debugPrintStack(stackTrace: stackTrace);
+      await _saveUpdateDiagnostic(
+          'FAILURE\ninstalled=${current.version}\nerror=$error\n\n$stackTrace');
       if (!silent && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text(_updateErrorMessage(error))));
       }
+    }
+  }
+
+  Future<void> _saveUpdateDiagnostic(String details) async {
+    final timestamp = DateTime.now().toIso8601String();
+    try {
+      await preferences.setString(
+          'update_diagnostics', 'timestamp=$timestamp\n$details');
+    } catch (error) {
+      debugPrint('Could not save update diagnostics: $error');
+    }
+  }
+
+  Future<void> _exportUpdateDiagnostics() async {
+    final diagnostics = await preferences.getString('update_diagnostics');
+    if (diagnostics == null || diagnostics.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('No update diagnostics recorded yet')));
+      }
+      return;
+    }
+    final info = packageInfo;
+    final version = info == null ? 'unknown' : '${info.version}+${info.buildNumber}';
+    final contents = 'WorkHoursApp update diagnostics\nversion=$version\n$diagnostics\n';
+    final saved = await FilePicker.saveFile(
+      fileName: 'work-hours-update-diagnostics.txt',
+      bytes: Uint8List.fromList(utf8.encode(contents)),
+      mimeType: 'text/plain',
+    );
+    if (saved != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Update diagnostics saved')));
     }
   }
 
@@ -1624,6 +1661,7 @@ class _WorkHomeState extends State<WorkHome> {
       context: context,
       builder: (_) => WorkHoursAboutDialog(
           onCheckUpdates: () => _checkForUpdates(),
+          onExportUpdateDiagnostics: _exportUpdateDiagnostics,
           onOpenGitHub: () => launchUrl(Uri.parse(_githubProjectUrl),
               mode: LaunchMode.externalApplication),
           version: packageInfo == null
@@ -2059,11 +2097,12 @@ class _ReminderSettingsDialogState extends State<ReminderSettingsDialog> {
 
 class WorkHoursAboutDialog extends StatelessWidget {
   const WorkHoursAboutDialog({super.key, required this.version,
-      this.onCheckUpdates, this.onOpenGitHub});
+      this.onCheckUpdates, this.onOpenGitHub, this.onExportUpdateDiagnostics});
 
   final String version;
   final VoidCallback? onCheckUpdates;
   final VoidCallback? onOpenGitHub;
+  final VoidCallback? onExportUpdateDiagnostics;
 
   @override
   Widget build(BuildContext context) => AlertDialog(
@@ -2080,6 +2119,9 @@ class WorkHoursAboutDialog extends StatelessWidget {
           const SizedBox(height: 8),
           TextButton.icon(onPressed: onOpenGitHub, icon: const Icon(Icons.open_in_new),
               label: const AppText('GitHub project')),
+          TextButton.icon(onPressed: onExportUpdateDiagnostics,
+              icon: const Icon(Icons.bug_report_outlined),
+              label: const Text('Export update diagnostics')),
         ]),
         actions: [
           TextButton.icon(onPressed: onCheckUpdates, icon: const Icon(Icons.system_update),

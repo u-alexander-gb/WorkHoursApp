@@ -53,6 +53,15 @@ jobs:
         with:
           name: work-hours-release-apk
           path: build/app/outputs/flutter-apk/app-release.apk
+      - name: Build diagnostic debug APK
+        if: github.event_name == 'push'
+        run: flutter build apk --debug
+      - name: Save diagnostic debug APK
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: work-hours-debug-apk
+          path: build/app/outputs/flutter-apk/app-debug.apk
 
   windows-build:
     runs-on: windows-latest
@@ -91,12 +100,20 @@ jobs:
           path: release/windows
           run-id: ${{ github.run_id }}
 
+      - name: Download diagnostic debug APK
+        uses: actions/download-artifact@v4
+        with:
+          name: work-hours-debug-apk
+          path: release/debug
+          run-id: ${{ github.run_id }}
+
       - name: Package release assets
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p release/assets
           cp release/android/app-release.apk "release/assets/WorkHoursApp-${GITHUB_REF_NAME}-android.apk"
+          cp release/debug/app-debug.apk "release/assets/WorkHoursApp-${GITHUB_REF_NAME}-android-debug.apk"
           (
             cd release/windows
             zip -qr "../assets/WorkHoursApp-${GITHUB_REF_NAME}-windows.zip" .
