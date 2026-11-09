@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -465,6 +464,7 @@ class _WorkHomeState extends State<WorkHome> {
       try {
         await _systemSettingsChannel.invokeMethod<void>('openAppSettings');
       } on PlatformException catch (settingsError) {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Could not open app settings: $settingsError')));
       }
