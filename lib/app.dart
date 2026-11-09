@@ -17,6 +17,7 @@ import 'src/plan_calendar.dart';
 import 'src/time_deviation.dart';
 import 'src/work_repository.dart';
 import 'src/reminder_service.dart';
+import 'src/reminder_scheduler.dart';
 import 'src/reminder_settings.dart';
 import 'src/report_csv.dart';
 
@@ -289,6 +290,7 @@ class WorkHome extends StatefulWidget {
 
 class _WorkHomeState extends State<WorkHome> {
   final ReminderService reminders = ReminderService();
+  late final ReminderScheduler reminderScheduler = ReminderScheduler(reminders);
   PackageInfo? packageInfo;
   String get _effectiveLanguageCode {
     if (widget.languageCode != null) return widget.languageCode!;
@@ -623,34 +625,12 @@ class _WorkHomeState extends State<WorkHome> {
   }
 
   Future<void> _rescheduleShift(WorkShift shift) async {
-    await reminders.cancel(shift.id);
-    if (shift.status == ShiftStatus.cancelled ||
-        shift.status == ShiftStatus.completed) {
-      return;
-    }
-    if (reminderSettings.startEnabled &&
-        shift.plannedStart.isAfter(DateTime.now())) {
-      await reminders.schedule(
-        shiftId: shift.id,
-        when: reminderSettings.when(shift.plannedStart, reminderSettings.startTiming),
-        projectName: shift.projectName,
-        kind: shift.status == ShiftStatus.planned
-            ? ReminderKind.checkIn : ReminderKind.start,
-        languageCode: _effectiveLanguageCode,
-      );
-    }
-    if (reminderSettings.endEnabled &&
-        shift.status != ShiftStatus.planned) {
-      final due = shift.plannedEnd ??
-          shift.plannedStart.add(const Duration(hours: 8));
-      await reminders.schedule(
-        shiftId: shift.id,
-        when: reminderSettings.when(due, reminderSettings.endTiming),
-        projectName: shift.projectName,
-        kind: ReminderKind.checkOut,
-        languageCode: _effectiveLanguageCode,
-      );
-    }
+    await reminderScheduler.reschedule(
+      shift: shift,
+      settings: reminderSettings,
+      now: DateTime.now(),
+      languageCode: _effectiveLanguageCode,
+    );
   }
 
   Future<DateTime?> _pickDateTime(DateTime initial) async {
@@ -1112,7 +1092,6 @@ class _WorkHomeState extends State<WorkHome> {
           plannedEnd: plannedEnd,
           reason: reason,
         );
-        await reminders.cancel(shift.id);
         final updated = (await widget.repository.shifts())
             .singleWhere((item) => item.id == shift.id);
         await _rescheduleShift(updated);

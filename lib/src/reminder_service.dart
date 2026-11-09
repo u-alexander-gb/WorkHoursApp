@@ -15,7 +15,19 @@ class ReminderResult {
 
 enum ReminderKind { checkIn, start, checkOut }
 
-class ReminderService {
+abstract interface class ReminderPort {
+  Future<ReminderResult> schedule({
+    required String shiftId,
+    required DateTime when,
+    required String projectName,
+    required ReminderKind kind,
+    required String languageCode,
+  });
+
+  Future<void> cancel(String shiftId);
+}
+
+class ReminderService implements ReminderPort {
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
   Future<void>? _initialization;
@@ -47,8 +59,10 @@ class ReminderService {
       return const ReminderResult(scheduled: false, exact: false);
     }
     await initialize();
-    final android = _plugin.resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin>();
+    final android = _plugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
     final allowed = await android?.requestNotificationsPermission();
     if (allowed == false) {
       return const ReminderResult(scheduled: false, exact: false);
@@ -65,7 +79,8 @@ class ReminderService {
     };
     final body = switch (kind) {
       ReminderKind.checkIn => 'Проверьте расписание и сделайте check-in.',
-      ReminderKind.start => 'Начало учёта часов по плану. Подтверждение не требуется.',
+      ReminderKind.start =>
+        'Начало учёта часов по плану. Подтверждение не требуется.',
       ReminderKind.checkOut => 'Смена ещё не завершена.',
     };
     await _plugin.zonedSchedule(
@@ -76,10 +91,15 @@ class ReminderService {
       notificationDetails: NotificationDetails(
         android: AndroidNotificationDetails(
           kind == ReminderKind.checkOut ? 'shift_end' : 'shift_start',
-          appTextForLanguage(languageCode,
-              kind == ReminderKind.checkOut ? 'Конец смены' : 'Начало смены'),
+          appTextForLanguage(
+            languageCode,
+            kind == ReminderKind.checkOut ? 'Конец смены' : 'Начало смены',
+          ),
           channelDescription: kind == ReminderKind.checkOut
-              ? appTextForLanguage(languageCode, 'Напоминания о завершении работы')
+              ? appTextForLanguage(
+                  languageCode,
+                  'Напоминания о завершении работы',
+                )
               : appTextForLanguage(languageCode, 'Напоминания о начале работы'),
           importance: Importance.high,
           priority: Priority.high,
