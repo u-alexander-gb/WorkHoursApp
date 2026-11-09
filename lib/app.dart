@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -40,6 +41,7 @@ const _githubReleasesApiUrl =
     'https://api.github.com/repos/u-alexander-gb/WorkHoursApp/releases';
 const _githubUpdateManifestUrl =
     'https://raw.githubusercontent.com/u-alexander-gb/WorkHoursApp/main/update.json';
+const _systemSettingsChannel = MethodChannel('work_hours_app/system_settings');
 
 String _updateErrorMessage(Object error) {
   final details = '$error';
@@ -426,9 +428,48 @@ class _WorkHomeState extends State<WorkHome> {
       await _saveUpdateDiagnostic(
           'FAILURE\ninstalled=${current.version}\nerror=$error\n\n$stackTrace');
       if (!silent && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(_updateErrorMessage(error))));
+        await _showUpdateAccessDialog(error);
       }
+    }
+  }
+
+  Future<void> _showUpdateAccessDialog(Object error) async {
+    final action = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const AppText('Update check failed'),
+        content: Text(
+          '${_updateErrorMessage(error)}\n\n'
+          'WorkHoursApp needs network access to check for updates. '
+          'On GrapheneOS, open the Network permission in the app settings '
+          'and enable it if it is disabled.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'later'),
+            child: const AppText('Later'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'settings'),
+            child: const AppText('Open app settings'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, 'retry'),
+            child: const AppText('Try again'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    if (action == 'settings') {
+      try {
+        await _systemSettingsChannel.invokeMethod<void>('openAppSettings');
+      } on PlatformException catch (settingsError) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not open app settings: $settingsError')));
+      }
+    } else if (action == 'retry') {
+      await _checkForUpdates();
     }
   }
 
